@@ -43,16 +43,21 @@ data/episodes/<slug>/
 python -m pytest tests/ -q
 ```
 
-Покрытие: Behaviour Detector (`test_detector.py`), Timeline Exporter
+Покрытие (32 теста): Behaviour Detector (`test_detector.py`), Timeline Exporter
 (`test_exporter.py`), вариативность/дрейф/лидерборд/чек-лист/метаданные
-(`test_core.py`), end-to-end offline-конвейер (`test_pipeline.py`).
+(`test_core.py`), end-to-end offline-конвейер (`test_pipeline.py`), пошаговая
+оркестрация + авто-сейв + objection/quickfire-resync (`test_studio_steps.py`).
 
 ## Статус по фазам (см. ТЗ Раздел 8)
 
 - **Фаза 1 (MVP) — готово:** детерминированное ядро + тесты, offline-конвейер
-  end-to-end, NiceGUI (Dashboard + Episode Studio + 6 экранов).
-- **Фаза 2:** живые LLM-адаптеры в проде, smoke-test UI, drag-and-drop Planner,
-  полный Quickfire-отбор и Translation-layer в UI.
+  end-to-end, NiceGUI (Dashboard + Episode Studio MVP + 6 экранов).
+- **Фаза 2 — готово:** полный **Episode Studio из 10 шагов** (smoke-test с reframe,
+  ревью с цветными флагами, рулинги objection, TTS-прогресс + resume, отбор
+  10 из 12 квикфайра, экспорт FCPXML+EDL, метаданные с copy); пошаговые
+  step-функции, авто-сейв/возобновление эпизода. Backend (exporter, smoke-test,
+  quickfire, translation-layer) — из Фазы 1. *Осталось:* живые провайдеры в
+  проде (нужны ключи, недоступны в этой среде), drag-and-drop в Planner.
 - **Фаза 3:** Leaderboard Engine (Oxford-дельта), Topic Bank CRUD, полный Logs.
 
 ## Дисклеймер

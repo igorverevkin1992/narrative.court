@@ -34,8 +34,13 @@ class MockAdapter(ModelAdapter):
                 content = f"No. It was avoidable and contingent. {snippet}"
         else:
             stance = "the motion stands" if side == "prosecution" else "the motion fails"
+            # A dated, quantified clause stands in for the factual claims a real
+            # model would cite -- this is what the objection step (step 6) rules on.
+            year = 1980 + int(h[2:4], 16) % 20
+            pct = 10 + int(h[4:6], 16) % 80
             content = (
                 f"As {side}, I hold that {stance}. {snippet} "
+                f"By {year}, the measured shift reached {pct}% — a decisive margin. "
                 f"The causal mechanism is direct and the evidence is decisive."
             )
 
