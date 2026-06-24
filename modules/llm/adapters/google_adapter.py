@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import time
 
-from modules.llm.adapters.base import AdapterError, ModelAdapter
+from modules.llm.adapters.base import AdapterError, ModelAdapter, classify_adapter_error
 from modules.schemas import GenerationResult
 
 
@@ -34,7 +34,7 @@ class GoogleAdapter(ModelAdapter):
                 ),
             )
         except Exception as exc:
-            raise AdapterError(f"{type(exc).__name__}: {exc}") from exc
+            raise classify_adapter_error(exc) from exc
 
         finish = "stop"
         try:

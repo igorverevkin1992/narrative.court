@@ -5,16 +5,21 @@ across the system. It mirrors Section 4 of TZ_Narrative_Court.md.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+# Episode slug: filesystem- and XML-safe (no path separators, dots, spaces).
+SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_]{0,63}$")
 
 
 # --------------------------------------------------------------------------- #
@@ -190,6 +195,17 @@ class Episode(BaseModel):
     timeline_data: TimelineData | None = None
     leaderboard_result: dict | None = None
     youtube_metadata: dict = Field(default_factory=dict)
+
+    @field_validator("slug")
+    @classmethod
+    def _validate_slug(cls, v: str) -> str:
+        """Reject path-traversal / unsafe slugs (used in fs paths, FCPXML, EDL)."""
+        if not SLUG_RE.match(v):
+            raise ValueError(
+                "slug must match ^[a-z0-9][a-z0-9_]{0,63}$ "
+                "(lowercase letters, digits, underscore; no spaces, dots, slashes)"
+            )
+        return v
 
 
 # --------------------------------------------------------------------------- #

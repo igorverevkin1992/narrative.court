@@ -14,6 +14,7 @@ episode folder, giving the UI autosave + resume (Block L.2, O.2).
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Callable
 
@@ -49,11 +50,21 @@ def _presets(config: Config) -> dict:
 
 
 def save_episode(episode: Episode, config: Config) -> Path:
-    """Autosave the episode as JSON inside its folder. Returns the file path."""
+    """Atomically autosave the episode JSON (tmp + os.replace) so a crash mid-write
+    never corrupts the resume file. Best-effort mirror into the SQLite episodes
+    table for Planner/Dashboard; JSON remains the source of truth."""
     d = episode_dir(episode, config)
     d.mkdir(parents=True, exist_ok=True)
     path = d / "episode.json"
-    path.write_text(episode.model_dump_json(indent=2), encoding="utf-8")
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(episode.model_dump_json(indent=2), encoding="utf-8")
+    os.replace(tmp, path)  # atomic on POSIX and Windows
+    try:
+        from modules.db import save_episode as _db_save_episode
+
+        _db_save_episode(episode)
+    except Exception:
+        pass  # DB optional (not initialised in tests; JSON is authoritative)
     return path
 
 

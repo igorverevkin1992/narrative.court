@@ -28,8 +28,8 @@ async def run_smoke_test(
     current_thesis = episode.thesis
     while True:
         attempt += 1
-        pros_sys = load_prompt("prosecution", pros_cfg["season"]).format(thesis=current_thesis)
-        def_sys = load_prompt("defense", def_cfg["season"]).format(thesis=current_thesis)
+        pros_sys = load_prompt("prosecution", pros_cfg["season"]).replace("{thesis}", current_thesis)
+        def_sys = load_prompt("defense", def_cfg["season"]).replace("{thesis}", current_thesis)
 
         r1p, r1d = await asyncio.gather(
             gen._gen_replica(episode, episode.prosecution_model_id, Side.PROSECUTION,

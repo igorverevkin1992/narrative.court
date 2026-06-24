@@ -84,7 +84,7 @@ def write_script(episode: Episode, script_dir: str | Path) -> dict:
 
     script_path.write_text(build_script_md(episode), encoding="utf-8")
     cues_path.write_text(
-        HOST_CUES_TEMPLATE.format(slug=episode.slug, thesis=episode.thesis),
+        HOST_CUES_TEMPLATE.replace("{slug}", episode.slug).replace("{thesis}", episode.thesis),
         encoding="utf-8",
     )
 

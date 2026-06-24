@@ -43,11 +43,23 @@ data/episodes/<slug>/
 python -m pytest tests/ -q
 ```
 
-Покрытие (40 тестов): Behaviour Detector (`test_detector.py`), Timeline Exporter
+Покрытие (52 теста): Behaviour Detector (`test_detector.py`), Timeline Exporter
 (`test_exporter.py`), вариативность/дрейф/лидерборд/чек-лист/метаданные
 (`test_core.py`), end-to-end offline-конвейер (`test_pipeline.py`), пошаговая
 оркестрация + авто-сейв + objection/quickfire-resync (`test_studio_steps.py`),
-Oxford-дельта/recompute/метрики/экспорт + Topic CRUD (`test_leaderboard_topics.py`).
+Oxford-дельта/recompute/метрики/экспорт + Topic CRUD (`test_leaderboard_topics.py`),
+slug-traversal/FCPXML-escape/markers-sanitize/atomic-save (`test_security.py`),
+адаптеры/классификация ошибок/GigaChat-403 (`test_adapters.py`).
+
+## Безопасность и устойчивость
+
+Аудит P0–P2 закрыт: валидатор `slug` (защита от path traversal в путях/FCPXML/EDL),
+лимит параллелизма LLM-вызовов (`max_parallel_requests`, RPM/TPM-safety),
+неретраябельные `AuthError` (401/403/400 не повторяются), атомарный автосейв
+эпизода, санитайз `markers.md` и control-символов в FCPXML + закалённый XML-парсер
+(анти-XXE), выделенное предупреждение `SanctionsBlockedError` в UI, безопасная
+подстановка шаблонов, HTML-escape сценария (анти-XSS), ввод ключей в keyring из
+Config-экрана. Сервер биндится на `127.0.0.1` (не публиковать наружу).
 
 ## Статус по фазам (см. ТЗ Раздел 8)
 

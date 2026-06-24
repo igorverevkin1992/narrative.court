@@ -12,7 +12,12 @@ from __future__ import annotations
 import os
 import time
 
-from modules.llm.adapters.base import AdapterError, ModelAdapter, SanctionsBlockedError
+from modules.llm.adapters.base import (
+    AdapterError,
+    ModelAdapter,
+    SanctionsBlockedError,
+    classify_adapter_error,
+)
 from modules.schemas import GenerationResult
 
 _OAUTH_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
@@ -69,7 +74,7 @@ class GigaChatAdapter(ModelAdapter):
         except SanctionsBlockedError:
             raise
         except Exception as exc:
-            raise AdapterError(f"{type(exc).__name__}: {exc}") from exc
+            raise classify_adapter_error(exc) from exc
 
         choice = data["choices"][0]
         return GenerationResult(

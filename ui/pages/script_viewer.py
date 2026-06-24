@@ -1,6 +1,7 @@
 """Script Viewer (Block L.1.5) -- renders the last episode's script with flags."""
 from __future__ import annotations
 
+import html
 from pathlib import Path
 
 from nicegui import ui
@@ -25,7 +26,9 @@ def render(state: AppState) -> None:
     with ui.card().classes("w-full"):
         ui.button("Копировать сценарий",
                   on_click=lambda: ui.clipboard.write(text)).props("flat color=primary")
-        ui.markdown(text)
+        # Escape HTML so model-generated reply text cannot inject markup/script
+        # while keeping markdown structure (#, **, tables) intact.
+        ui.markdown(html.escape(text, quote=False))
 
     flags_path = Path(state.last_result.get("flags", ""))
     if flags_path.exists():

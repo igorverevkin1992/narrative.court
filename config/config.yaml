@@ -22,6 +22,7 @@ generation_defaults:
   retry_attempts: 3                # tenacity attempts per call
   timeout_seconds: 120             # reasoning models (DeepSeek V4 / Claude extended) need headroom
   reasoning_timeout_seconds: 180   # used when behaviour_profile.reasoning == true
+  max_parallel_requests: 4         # concurrency cap on live LLM calls (Block B.2 RPM/TPM safety)
 
 tts_defaults:
   output_format: "pcm_44100"       # converted to WAV 44.1 kHz/16-bit on disk; Pro plan required

@@ -14,11 +14,18 @@ from modules.timeline.timecode_calculator import build_timeline
 
 
 def validate_fcpxml(xml: str) -> bool:
-    """Return True if the FCPXML string is well-formed."""
+    """Return True if the FCPXML string is well-formed.
+
+    Uses a hardened parser (no external DTD load, no entity resolution, no
+    network) so validation can never be turned into an XXE/SSRF vector.
+    """
     try:
         from lxml import etree  # type: ignore
 
-        etree.fromstring(xml.encode("utf-8"))
+        parser = etree.XMLParser(
+            resolve_entities=False, no_network=True, load_dtd=False, dtd_validation=False,
+        )
+        etree.fromstring(xml.encode("utf-8"), parser)
         return True
     except Exception:
         try:

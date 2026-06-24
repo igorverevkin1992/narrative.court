@@ -13,7 +13,7 @@ from typing import Callable
 from modules.config import Config
 from modules.detector.behaviour_detector import detect
 from modules.llm.orchestrator import Orchestrator
-from modules.quickfire.manager import score_and_select, trim_to_words
+from modules.quickfire.manager import WORD_BUDGET, score_and_select, trim_to_words
 from modules.schemas import Episode, QuickfireExchange, Replica, Side
 from modules.translation.gemini_corrector import correct
 
@@ -97,8 +97,8 @@ class EpisodeGenerator:
         if pros_cfg is None or def_cfg is None:
             raise ValueError("Prosecution/defense model not found in config")
 
-        pros_sys = load_prompt("prosecution", pros_cfg["season"]).format(thesis=episode.thesis)
-        def_sys = load_prompt("defense", def_cfg["season"]).format(thesis=episode.thesis)
+        pros_sys = load_prompt("prosecution", pros_cfg["season"]).replace("{thesis}", episode.thesis)
+        def_sys = load_prompt("defense", def_cfg["season"]).replace("{thesis}", episode.thesis)
         mt = episode.gen_params.max_tokens
         qmt = episode.gen_params.quickfire_max_tokens
 
@@ -128,10 +128,15 @@ class EpisodeGenerator:
         for i, q in enumerate(questions):
             p = qf_results[i * 2]
             d = qf_results[i * 2 + 1]
+            p_text = p.used_text or p.text
+            d_text = d.used_text or d.text
+            # Flag answers that exceeded the ~15 s word budget before trimming.
+            over = len(p_text.split()) > WORD_BUDGET or len(d_text.split()) > WORD_BUDGET
             exchanges.append(QuickfireExchange(
                 question=q,
-                prosecution_answer=trim_to_words(p.used_text or p.text),
-                defense_answer=trim_to_words(d.used_text or d.text),
+                prosecution_answer=trim_to_words(p_text),
+                defense_answer=trim_to_words(d_text),
+                over_limit=over,
             ))
         threshold = float(self.config.get("quickfire", "variability_threshold", default=0.35))
         select_n = int(self.config.get("quickfire", "questions_selected", default=10))

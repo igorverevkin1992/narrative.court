@@ -34,6 +34,7 @@ from modules.episodes.manager import (
     step_tts,
     sync_quickfire_selection,
 )
+from modules.llm.adapters.base import SanctionsBlockedError
 from modules.schemas import Episode, GenParams, ObjectionEvent, Side
 from ui.state import AppState
 
@@ -50,6 +51,18 @@ _ROUND_GROUPS = [
 async def _copy(text: str) -> None:
     await ui.clipboard.write(text)
     ui.notify("Скопировано в буфер", type="positive")
+
+
+def _report_exc(exc: Exception, log, prefix: str) -> None:
+    """Surface a pipeline error; sanctions blocks get the legal warning (Block O.6)."""
+    if isinstance(exc, SanctionsBlockedError):
+        msg = ("[SANCTIONS RISK — legal review required, INA §329] "
+               f"Провайдер отклонил доступ: {exc}")
+        log.push(msg)
+        ui.notify(msg, type="negative", timeout=12000)
+    else:
+        log.push(f"ОШИБКА: {exc}")
+        ui.notify(f"{prefix}: {exc}", type="negative")
 
 
 def render(state: AppState) -> None:
@@ -307,8 +320,7 @@ def render(state: AppState) -> None:
                     res = await step_smoke_test(
                         ep(), cfg, offline=offline.value, on_log=lambda m: smoke_log.push(m))
                 except Exception as exc:
-                    smoke_log.push(f"ОШИБКА: {exc}")
-                    ui.notify(f"Ошибка smoke-test: {exc}", type="negative")
+                    _report_exc(exc, smoke_log, "Ошибка smoke-test")
                     smoke_btn.enable()
                     return
                 ctx["smoke"] = res
@@ -356,8 +368,7 @@ def render(state: AppState) -> None:
                 try:
                     await step_generate(ep(), cfg, offline=offline.value, on_log=lambda m: gen_log.push(m))
                 except Exception as exc:
-                    gen_log.push(f"ОШИБКА: {exc}")
-                    ui.notify(f"Ошибка генерации: {exc}", type="negative")
+                    _report_exc(exc, gen_log, "Ошибка генерации")
                     gen_btn.enable()
                     return
                 ctx.pop("claims", None)

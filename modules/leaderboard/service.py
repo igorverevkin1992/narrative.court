@@ -41,7 +41,9 @@ def record_delta(episode: Episode, delta: OxfordDelta) -> dict:
 def collect_outcomes(config: Config) -> list[EpisodeOutcome]:
     """Build outcomes from every saved episode that has a recorded delta."""
     outcomes: list[EpisodeOutcome] = []
-    for episode in list_saved_episodes(config):
+    # Win-streak is order-sensitive: process episodes oldest -> newest so the
+    # streak reflects the most recent run (list_saved_episodes is newest-first).
+    for episode in sorted(list_saved_episodes(config), key=lambda e: e.created_at):
         lr = episode.leaderboard_result or {}
         delta_data = lr.get("delta")
         if not delta_data:

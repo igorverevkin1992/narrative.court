@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import time
 
-from modules.llm.adapters.base import AdapterError, ModelAdapter
+from modules.llm.adapters.base import AdapterError, ModelAdapter, classify_adapter_error
 from modules.schemas import GenerationResult
 
 
@@ -34,8 +34,8 @@ class OpenAIAdapter(ModelAdapter):
                 max_tokens=max_tokens,
                 seed=seed,
             )
-        except Exception as exc:  # network/auth/rate -> let orchestrator retry policy decide
-            raise AdapterError(f"{type(exc).__name__}: {exc}") from exc
+        except Exception as exc:  # classify: auth/4xx non-retryable, rest transient
+            raise classify_adapter_error(exc) from exc
 
         choice = resp.choices[0]
         msg = choice.message

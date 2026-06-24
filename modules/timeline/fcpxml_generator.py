@@ -7,6 +7,8 @@ ElementTree if lxml is unavailable (well-formedness is preserved either way).
 """
 from __future__ import annotations
 
+import re
+
 from modules.schemas import Episode, TimelineData
 
 try:
@@ -17,6 +19,14 @@ except Exception:  # pragma: no cover - exercised only without lxml
     import xml.etree.ElementTree as _ET  # type: ignore
 
     _HAVE_LXML = False
+
+
+_ILLEGAL_XML = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def _xml_safe(s: str) -> str:
+    """Strip characters illegal in XML 1.0 (lxml escapes <>& on its own)."""
+    return _ILLEGAL_XML.sub("", s or "")
 
 
 def _t(frames: int, fps: int) -> str:
@@ -56,7 +66,7 @@ def generate_fcpxml(
 
     for clip, aid in clip_assets:
         asset = _ET.SubElement(
-            resources, "asset", id=aid, name=clip.clip_id, start="0s",
+            resources, "asset", id=aid, name=_xml_safe(clip.clip_id), start="0s",
             duration=_t(clip.duration_frames, fps), hasVideo="0", hasAudio="1",
             audioSources="1", audioChannels="1", audioRate=sr,
         )
@@ -67,7 +77,7 @@ def generate_fcpxml(
 
     library = _ET.SubElement(fcpxml, "library")
     event = _ET.SubElement(library, "event", name="The Narrative Court")
-    project = _ET.SubElement(event, "project", name=project_name or episode.slug)
+    project = _ET.SubElement(event, "project", name=_xml_safe(project_name or episode.slug))
     sequence = _ET.SubElement(
         project, "sequence", format="r1", duration=_t(timeline.total_frames, fps),
         tcStart="0s", tcFormat="NDF", audioLayout="stereo", audioRate=sr,
@@ -81,7 +91,7 @@ def generate_fcpxml(
     for clip, aid in clip_assets:
         _ET.SubElement(
             gap, "asset-clip", ref=aid, lane=str(clip.lane),
-            offset=_t(clip.start_frames, fps), name=clip.clip_id,
+            offset=_t(clip.start_frames, fps), name=_xml_safe(clip.clip_id),
             duration=_t(clip.duration_frames, fps),
             audioRole=_role_for_track(clip.track),
         )
@@ -89,7 +99,7 @@ def generate_fcpxml(
     for marker in timeline.markers:
         _ET.SubElement(
             gap, "marker", start=_t(marker.frame, fps),
-            duration=_t(1, fps), value=marker.marker_type,
+            duration=_t(1, fps), value=_xml_safe(marker.marker_type),
         )
 
     if _HAVE_LXML:

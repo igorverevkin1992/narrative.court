@@ -13,11 +13,37 @@ def prompt_hash(system: str, user: str) -> str:
 
 
 class AdapterError(RuntimeError):
-    """Generic adapter failure (network/auth/parse)."""
+    """Generic, retryable adapter failure (network/5xx/rate-limit/parse)."""
+
+
+class AuthError(AdapterError):
+    """Non-retryable client error (auth/permission/bad request: 400/401/403)."""
 
 
 class SanctionsBlockedError(AdapterError):
     """Raised when a provider denies access for sanctions/region reasons (Block O.6)."""
+
+
+# HTTP status codes that indicate a client-side problem retrying will not fix.
+_NON_RETRYABLE_STATUS = {400, 401, 403, 404, 422}
+
+
+def classify_adapter_error(exc: Exception) -> AdapterError:
+    """Map a provider/SDK/httpx exception to AuthError (non-retryable) or AdapterError.
+
+    Looks for a status code on the exception itself, its ``response``, or a
+    ``code`` attribute (covers openai/anthropic SDK errors and httpx
+    HTTPStatusError). Anything else is treated as transient and retryable.
+    """
+    status = (
+        getattr(exc, "status_code", None)
+        or getattr(getattr(exc, "response", None), "status_code", None)
+        or getattr(exc, "code", None)
+    )
+    msg = f"{type(exc).__name__}: {exc}"
+    if isinstance(status, int) and status in _NON_RETRYABLE_STATUS:
+        return AuthError(msg)
+    return AdapterError(msg)
 
 
 class ModelAdapter(ABC):

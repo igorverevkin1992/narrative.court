@@ -14,14 +14,15 @@ from uuid import UUID
 import tenacity
 
 from modules.config import Config, get_secret
-from modules.llm.adapters.base import AdapterError, SanctionsBlockedError
+from modules.llm.adapters.base import AdapterError, AuthError, SanctionsBlockedError
 from modules.llm.models_registry import build_adapter
 from modules.schemas import GenerationLog, GenerationResult
 
 
 def _retryable(exc: BaseException) -> bool:
-    """Retry transient adapter errors, but never sanctions/region blocks (Block B.2)."""
-    if isinstance(exc, SanctionsBlockedError):
+    """Retry transient adapter errors, but never sanctions blocks or client
+    errors (auth/permission/bad-request) that retrying cannot fix (Block B.2)."""
+    if isinstance(exc, (SanctionsBlockedError, AuthError)):
         return False
     return isinstance(exc, AdapterError)
 
@@ -31,6 +32,10 @@ class Orchestrator:
         self.config = config
         self.offline = offline
         self.logs_dir = Path(logs_dir) if logs_dir else config.resolve_path("logs_dir")
+        # Cap concurrent live API calls so parallel rounds/quickfire do not blow
+        # provider RPM/TPM limits (Block B.2). Shared across this run's calls.
+        max_parallel = int(config.generation_defaults.get("max_parallel_requests", 4))
+        self._sem = asyncio.Semaphore(max(1, max_parallel))
 
     def _timeout(self, model_cfg: dict) -> int:
         gd = self.config.generation_defaults
@@ -85,8 +90,10 @@ class Orchestrator:
         return result
 
     async def agenerate(self, *args, **kwargs) -> GenerationResult:
-        """Async wrapper: runs the sync adapter call in a worker thread."""
-        return await asyncio.to_thread(self.generate, *args, **kwargs)
+        """Async wrapper: runs the sync adapter call in a worker thread under a
+        concurrency semaphore (Block B.2 rate-limit safety)."""
+        async with self._sem:
+            return await asyncio.to_thread(self.generate, *args, **kwargs)
 
     def _log(self, episode_id, model_id, round_id, attempt_no, system, user,
              temperature, seed, result) -> None:

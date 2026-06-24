@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+from datetime import datetime, timezone
 
 from modules.config import load_config
 from modules.episodes.manager import save_episode
@@ -105,6 +106,28 @@ def test_service_collect_outcomes_from_saved_episode(tmp_path):
     outcomes = collect_outcomes(config)
     assert len(outcomes) == 1
     assert outcomes[0].winner_model_id == "gpt-5.5"
+
+
+def test_collect_outcomes_orders_chronologically(tmp_path):
+    """P0-2: outcomes ordered by created_at (oldest first) so win-streak is
+    chronological regardless of save order / file mtime."""
+    config = load_config()
+    config._data["app"]["episodes_dir"] = str(tmp_path / "episodes")
+
+    old = _episode_with_events("ep_old")
+    old.created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    new = _episode_with_events("ep_new")
+    new.created_at = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    record_delta(old, _prosecution_wins_delta(old))
+    record_delta(new, _prosecution_wins_delta(new))
+
+    # Save oldest-created first so mtime order (newest-first) differs from
+    # chronological order; the fix must still yield [old, new].
+    save_episode(old, config)
+    save_episode(new, config)
+
+    outcomes = collect_outcomes(config)
+    assert [o.episode_id for o in outcomes] == [str(old.id), str(new.id)]
 
 
 def test_topic_crud_and_checklist(tmp_path):

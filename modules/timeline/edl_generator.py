@@ -5,6 +5,7 @@ lists every marker timecode for manual placement in DaVinci Resolve.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from modules.schemas import Episode, TimelineData
@@ -42,6 +43,8 @@ def generate_markers_md(episode: Episode, timeline: TimelineData) -> str:
     ]
     for m in sorted(timeline.markers, key=lambda x: x.frame):
         tc = frames_to_timecode(m.frame, fps)
-        note = (m.note or "").replace("|", "/")
+        # Collapse newlines/whitespace and neutralise pipes so model-derived
+        # evidence text cannot break the markdown table row.
+        note = re.sub(r"\s+", " ", (m.note or "")).replace("|", "/").strip()
         out.append(f"| {tc} | {m.marker_type} | {m.track} | {note} |")
     return "\n".join(out) + "\n"
