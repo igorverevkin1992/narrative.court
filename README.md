@@ -43,10 +43,11 @@ data/episodes/<slug>/
 python -m pytest tests/ -q
 ```
 
-Покрытие (32 теста): Behaviour Detector (`test_detector.py`), Timeline Exporter
+Покрытие (40 тестов): Behaviour Detector (`test_detector.py`), Timeline Exporter
 (`test_exporter.py`), вариативность/дрейф/лидерборд/чек-лист/метаданные
 (`test_core.py`), end-to-end offline-конвейер (`test_pipeline.py`), пошаговая
-оркестрация + авто-сейв + objection/quickfire-resync (`test_studio_steps.py`).
+оркестрация + авто-сейв + objection/quickfire-resync (`test_studio_steps.py`),
+Oxford-дельта/recompute/метрики/экспорт + Topic CRUD (`test_leaderboard_topics.py`).
 
 ## Статус по фазам (см. ТЗ Раздел 8)
 
@@ -55,10 +56,13 @@ python -m pytest tests/ -q
 - **Фаза 2 — готово:** полный **Episode Studio из 10 шагов** (smoke-test с reframe,
   ревью с цветными флагами, рулинги objection, TTS-прогресс + resume, отбор
   10 из 12 квикфайра, экспорт FCPXML+EDL, метаданные с copy); пошаговые
-  step-функции, авто-сейв/возобновление эпизода. Backend (exporter, smoke-test,
-  quickfire, translation-layer) — из Фазы 1. *Осталось:* живые провайдеры в
-  проде (нужны ключи, недоступны в этой среде), drag-and-drop в Planner.
-- **Фаза 3:** Leaderboard Engine (Oxford-дельта), Topic Bank CRUD, полный Logs.
+  step-функции, авто-сейв/возобновление эпизода.
+- **Фаза 3 — готово:** **Leaderboard** (ввод Oxford-дельты → пересчёт 5 метрик →
+  экспорт Markdown/CSV, персист `leaderboard_aggregate`); **Topic Bank** CRUD с
+  интерактивным чек-листом (авто-статус approved/warning/rejected), фильтрами и
+  удалением; **полный Logs-экран** (все прогоны, фильтры эпизод/модель/finish_reason,
+  детальный просмотр, экспорт «selected»); **Planner** с сохраняемым переупорядочением.
+  *Осталось:* живые провайдеры в проде (нужны ключи, недоступны в этой среде).
 
 ## Дисклеймер
 

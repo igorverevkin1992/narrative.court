@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from modules.schemas import LeaderboardEntry, OxfordDelta, Side
+from modules.schemas import Episode, LeaderboardEntry, OxfordDelta, Side
 
 
 @dataclass
@@ -28,6 +28,50 @@ def winner_model_id(delta: OxfordDelta, prosecution_id: str, defense_id: str) ->
     if side is None:
         return None
     return prosecution_id if side == Side.PROSECUTION else defense_id
+
+
+def model_meta_from_config(models: list[dict]) -> dict[str, dict]:
+    """Build the ``model_meta`` map ``recompute`` needs from config.yaml models."""
+    return {
+        m["id"]: {
+            "display_name": m.get("display_name", m["id"]),
+            "season": int(m.get("season", 1)),
+            "is_deepseek": "deepseek" in m["id"].lower(),
+        }
+        for m in models
+    }
+
+
+def outcome_from_episode(episode: Episode, delta: OxfordDelta) -> EpisodeOutcome:
+    """Derive a per-episode outcome from its Oxford delta + recorded events.
+
+    - winner: from the Oxford delta (None when no_quorum)
+    - sustained/overruled: objections attributed to the side that made the claim
+    - refused: REFUSED behaviour flags counted per model
+    """
+    pros, deff = episode.prosecution_model_id, episode.defense_model_id
+    winner = winner_model_id(delta, pros, deff)
+    sustained: dict[str, int] = {}
+    overruled: dict[str, int] = {}
+    refused: dict[str, int] = {}
+    for obj in episode.objections:
+        mid = pros if obj.side == Side.PROSECUTION else deff
+        if obj.ruling == "sustained":
+            sustained[mid] = sustained.get(mid, 0) + 1
+        elif obj.ruling == "overruled":
+            overruled[mid] = overruled.get(mid, 0) + 1
+    for flag in episode.behaviour_flags:
+        if flag.flag_type == "REFUSED":
+            refused[flag.model_id] = refused.get(flag.model_id, 0) + 1
+    return EpisodeOutcome(
+        episode_id=str(episode.id),
+        prosecution_model_id=pros,
+        defense_model_id=deff,
+        winner_model_id=winner,
+        sustained_by_model=sustained,
+        overruled_by_model=overruled,
+        refused_by_model=refused,
+    )
 
 
 def recompute(outcomes: list[EpisodeOutcome], model_meta: dict[str, dict]) -> list[LeaderboardEntry]:

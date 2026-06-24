@@ -140,3 +140,30 @@ def save_episode(episode) -> None:
         row.defense_model_id = episode.defense_model_id
         row.payload_json = episode.model_dump_json()
         s.commit()
+
+
+def save_leaderboard(entries) -> None:
+    """Upsert recomputed LeaderboardEntry rows into leaderboard_aggregate."""
+    with get_session() as s:
+        for e in entries:
+            row = s.get(LeaderboardRow, e.model_id)
+            if row is None:
+                row = LeaderboardRow(model_id=e.model_id)
+                s.add(row)
+            row.season = e.season
+            row.win_count = e.win_count
+            row.objection_sustained_pct = e.objection_sustained_pct
+            row.explicit_refusal_pct = e.explicit_refusal_pct
+            row.avg_sustained_per_episode = e.avg_sustained_per_episode
+            row.win_streak = e.win_streak
+            row.updated_at = _now()
+        s.commit()
+
+
+def delete_topic(topic_id: str) -> None:
+    """Remove a topic row by id (Topic Bank delete action)."""
+    with get_session() as s:
+        row = s.get(TopicRow, topic_id)
+        if row is not None:
+            s.delete(row)
+            s.commit()
