@@ -1,0 +1,20 @@
+# Secrets
+config/.env
+
+# Runtime data (generated per episode)
+data/episodes/*
+data/exports/*
+data/logs/*
+data/*.db
+data/narrative_court.db
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+
+# OS
+.DS_Store

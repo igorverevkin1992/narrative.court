@@ -1,0 +1,39 @@
+# ============================================================
+# The Narrative Court - production system dependencies
+# Pinned to versions current on PyPI as of June 2026.
+# Target runtime: Python >=3.11,<3.14 (NiceGUI supports 3.10-3.13).
+# Install:  python -m pip install -r requirements.txt
+# ============================================================
+
+# --- Web UI (local, single-file, async-native, no JS required) ---
+nicegui==3.13.0
+
+# --- LLM provider SDKs ---
+openai==1.99.1            # also drives every OpenAI-compatible base_url
+anthropic==0.69.0         # Claude Opus 4.8
+google-genai==1.21.0      # Gemini 3.1 Pro (unified Google Gen AI SDK)
+
+# --- TTS ---
+elevenlabs==2.45.0
+
+# --- Data validation / config / secrets ---
+pydantic==2.12.5
+PyYAML==6.0.2
+python-dotenv==1.1.1
+keyring==25.6.0          # OS-native secrets: Keychain / Credential Manager / SecretService
+
+# --- Persistence ---
+SQLAlchemy==2.0.43       # ORM + Core over the stdlib sqlite3 driver
+
+# --- HTTP / retry / async ---
+httpx==0.28.1            # async HTTP for custom adapters (Yandex, GigaChat, Falcon, HyperCLOVA)
+tenacity==9.1.2          # retry with exponential backoff + jitter
+
+# --- Audio duration + XML (FCPXML) ---
+soundfile==0.13.2        # WAV duration via libsndfile, NO ffmpeg dependency
+mutagen==1.47.0          # pure-python duration fallback
+lxml==6.0.0              # FCPXML generation and well-formedness validation
+
+# --- Testing (mandatory for MVP) ---
+pytest==8.4.2
+pytest-asyncio==1.0.0
