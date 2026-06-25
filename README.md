@@ -1,5 +1,7 @@
 # The Narrative Court
 
+[![tests](https://github.com/igorverevkin1992/narrative.court/actions/workflows/ci.yml/badge.svg)](https://github.com/igorverevkin1992/narrative.court/actions/workflows/ci.yml)
+
 Производственный конвейер YouTube-шоу, где две LLM аргументируют противоположные
 стороны спорного тезиса в формате зала суда. Система автоматизирует путь
 **от темы → до готового DaVinci Resolve таймлайна** (FCPXML + EDL) для ручного монтажа.
@@ -52,6 +54,10 @@ slug-traversal/FCPXML-escape/markers-sanitize/atomic-save (`test_security.py`),
 адаптеры/классификация ошибок/GigaChat-403 (`test_adapters.py`), краевые сценарии
 O.1–O.7 (`test_edge_cases.py`), полный 10-шаговый поток (`test_integration.py`),
 TTS-resume-длительность/валидаторы/delimiter/secret-cache (`test_audit2.py`).
+
+CI: `.github/workflows/ci.yml` гоняет весь offline-набор на Python 3.11/3.12 при
+каждом push/PR. Ставится лёгкий `requirements-test.txt` (pydantic/PyYAML/SQLAlchemy/
+tenacity/lxml) — тяжёлые SDK не нужны: они импортируются лениво и в offline не вызываются.
 
 ## Безопасность и устойчивость
 
