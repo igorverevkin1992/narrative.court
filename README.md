@@ -43,14 +43,15 @@ data/episodes/<slug>/
 python -m pytest tests/ -q
 ```
 
-Покрытие (60 тестов): Behaviour Detector (`test_detector.py`), Timeline Exporter
+Покрытие (66 тестов): Behaviour Detector (`test_detector.py`), Timeline Exporter
 (`test_exporter.py`), вариативность/дрейф/лидерборд/чек-лист/метаданные
 (`test_core.py`), end-to-end offline-конвейер (`test_pipeline.py`), пошаговая
 оркестрация + авто-сейв + objection/quickfire-resync (`test_studio_steps.py`),
 Oxford-дельта/recompute/метрики/экспорт + Topic CRUD (`test_leaderboard_topics.py`),
 slug-traversal/FCPXML-escape/markers-sanitize/atomic-save (`test_security.py`),
 адаптеры/классификация ошибок/GigaChat-403 (`test_adapters.py`), краевые сценарии
-O.1–O.7 (`test_edge_cases.py`), полный 10-шаговый поток (`test_integration.py`).
+O.1–O.7 (`test_edge_cases.py`), полный 10-шаговый поток (`test_integration.py`),
+TTS-resume-длительность/валидаторы/delimiter/secret-cache (`test_audit2.py`).
 
 ## Безопасность и устойчивость
 
@@ -61,6 +62,12 @@ O.1–O.7 (`test_edge_cases.py`), полный 10-шаговый поток (`te
 (анти-XXE), выделенное предупреждение `SanctionsBlockedError` в UI, безопасная
 подстановка шаблонов, HTML-escape сценария (анти-XSS), ввод ключей в keyring из
 Config-экрана. Сервер биндится на `127.0.0.1` (не публиковать наружу).
+
+Второй аудит (корректность): измерение длительности WAV при возобновлении TTS
+(точность таймкодов), валидаторы значений `GenParams`/`OxfordDelta`, ретеншен
+логов генерации (Block B.3), корректный TTS-checkpoint-summary после переотбора
+квикфайра, инвариант одной реплики на раунд, санитайз prompt-делимитеров R1→R3,
+кеш секретов (меньше обращений к keychain), узкий `except` в DB-зеркале.
 
 Краевые сценарии (ТЗ Block O.1–O.7) доведены до UI: O.1 callout REFUSED/SUPPRESSED
 в ревью, O.2 сводка+сброс TTS-чекпойнта, O.3 баннер «ответы слишком похожи»,

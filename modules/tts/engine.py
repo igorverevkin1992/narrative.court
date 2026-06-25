@@ -133,7 +133,14 @@ class TTSEngine:
         for i, job in enumerate(jobs, 1):
             entry = state.get(job.clip_id)
             if entry == "done" and Path(job.out_path).exists():
-                durations[job.clip_id] = estimate_duration(job.text)
+                # Resume path: measure the existing WAV so timecodes match the real
+                # audio (F1) -- estimate_duration is only a last-resort fallback.
+                try:
+                    from modules.timeline.timecode_calculator import audio_duration_sec
+
+                    durations[job.clip_id] = audio_duration_sec(job.out_path)
+                except Exception:
+                    durations[job.clip_id] = estimate_duration(job.text)
                 if on_progress:
                     on_progress(i, total, f"skip {job.clip_id} (done)")
                 continue

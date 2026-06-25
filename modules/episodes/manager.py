@@ -63,8 +63,12 @@ def save_episode(episode: Episode, config: Config) -> Path:
         from modules.db import save_episode as _db_save_episode
 
         _db_save_episode(episode)
-    except Exception:
-        pass  # DB optional (not initialised in tests; JSON is authoritative)
+    except RuntimeError:
+        pass  # DB not initialised (tests / pre-onboarding); JSON is authoritative
+    except Exception as exc:  # surface unexpected DB failures instead of hiding them (F8)
+        import logging
+
+        logging.getLogger(__name__).warning("episode DB mirror failed: %s", exc)
     return path
 
 
@@ -100,11 +104,16 @@ def tts_checkpoint_path(episode: Episode, config: Config) -> Path:
 
 
 def tts_checkpoint_summary(episode: Episode, config: Config) -> dict:
-    """{done, failed, total, remaining} from the resumable TTS checkpoint."""
+    """{done, failed, total, remaining} from the resumable TTS checkpoint.
+
+    Counts only clips that belong to the CURRENT rounds so a stale checkpoint
+    (e.g. after a quickfire re-selection dropped old r2 clips) cannot report
+    more done than total (F4)."""
     state = TTSEngine._load_checkpoint(tts_checkpoint_path(episode, config))
+    current = set(episode.rounds.keys())
     total = n_clips(episode)
-    done = sum(1 for v in state.values() if v == "done")
-    failed = sum(1 for v in state.values() if v == "failed")
+    done = sum(1 for k, v in state.items() if v == "done" and k in current)
+    failed = sum(1 for k, v in state.items() if v == "failed" and k in current)
     return {"done": done, "failed": failed, "total": total, "remaining": max(0, total - done)}
 
 
@@ -206,9 +215,13 @@ def step_tts(
     )
     jobs: list[TTSJob] = []
     for rid, replicas in episode.rounds.items():
-        for rep in replicas:
-            out = audio_dir / f"{rid}.wav"
-            jobs.append(TTSJob(rid, rep.model_id, rep.used_text or rep.text, str(out)))
+        # Invariant: exactly one replica per round_id (clip_id and {rid}.wav are
+        # keyed by rid). Fail fast instead of silently overwriting a file (F5).
+        if len(replicas) != 1:
+            raise ValueError(f"round '{rid}' must have exactly one replica, got {len(replicas)}")
+        rep = replicas[0]
+        out = audio_dir / f"{rid}.wav"
+        jobs.append(TTSJob(rid, rep.model_id, rep.used_text or rep.text, str(out)))
 
     durations = engine.run_batch(jobs, d / "tts_progress.json", on_progress=on_progress)
     for rid, replicas in episode.rounds.items():

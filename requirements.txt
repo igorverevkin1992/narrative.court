@@ -3,6 +3,9 @@
 # Pinned to versions current on PyPI as of June 2026.
 # Target runtime: Python >=3.11,<3.14 (NiceGUI supports 3.10-3.13).
 # Install:  python -m pip install -r requirements.txt
+# Supply-chain hardening (production): pin hashes with
+#   pip-compile --generate-hashes -o requirements.txt requirements.in
+# then install with: pip install --require-hashes -r requirements.txt
 # ============================================================
 
 # --- Web UI (local, single-file, async-native, no JS required) ---

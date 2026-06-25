@@ -7,6 +7,7 @@ layer to Season-2 models, and scores/selects the quickfire.
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 from typing import Callable
 
@@ -39,7 +40,17 @@ def load_prompt(side: str, season: int) -> str:
     return (PROMPTS_DIR / f"{side}_s{season}.txt").read_text(encoding="utf-8")
 
 
+# Control delimiters that frame injected text in prompts. Strip them from any
+# model-generated text we inject so a model cannot break out of the block (F6).
+_CONTROL_DELIMS = re.compile(r"\[/?(?:OPPONENT_OPENING_STATEMENT|YOUR_REBUTTALS)\]")
+
+
+def _strip_delims(text: str) -> str:
+    return _CONTROL_DELIMS.sub("", text)
+
+
 def _r3_user(side: str, n: int, opponent_text: str) -> str:
+    opponent_text = _strip_delims(opponent_text)
     return (
         f"[OPPONENT_OPENING_STATEMENT]\n{opponent_text}\n[/OPPONENT_OPENING_STATEMENT]\n\n"
         f"You are arguing {side}. Rebut Point {n} of the opponent's opening above. "
@@ -169,10 +180,10 @@ class EpisodeGenerator:
             episode.rounds[rep.round_id] = [rep]
 
         # --- Round 4 (closing, depends on Round 3) ---
-        r3_summary_pros = " ".join(
-            episode.rounds[f"r3_p{n}_prosecution"][0].text for n in (1, 2, 3))
-        r3_summary_def = " ".join(
-            episode.rounds[f"r3_p{n}_defense"][0].text for n in (1, 2, 3))
+        r3_summary_pros = _strip_delims(" ".join(
+            episode.rounds[f"r3_p{n}_prosecution"][0].text for n in (1, 2, 3)))
+        r3_summary_def = _strip_delims(" ".join(
+            episode.rounds[f"r3_p{n}_defense"][0].text for n in (1, 2, 3)))
         r4_user_pros = (f"[YOUR_REBUTTALS]\n{r3_summary_pros}\n[/YOUR_REBUTTALS]\n\n"
                         "Deliver your closing statement (Round 4). Summarize why your side prevailed.")
         r4_user_def = (f"[YOUR_REBUTTALS]\n{r3_summary_def}\n[/YOUR_REBUTTALS]\n\n"

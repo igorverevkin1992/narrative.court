@@ -14,6 +14,9 @@ from nicegui import ui
 from ui.state import AppState
 
 
+_MAX_ENTRIES = 5000  # bound memory regardless of history size (paired with log retention)
+
+
 def _load_entries(logs_dir: Path) -> list[dict]:
     entries: list[dict] = []
     if not logs_dir.exists():
@@ -31,6 +34,8 @@ def _load_entries(logs_dir: Path) -> list[dict]:
             rec["_episode"] = episode
             rec["_finish"] = (rec.get("result") or {}).get("finish_reason", "?")
             entries.append(rec)
+            if len(entries) >= _MAX_ENTRIES:
+                return entries
     return entries
 
 

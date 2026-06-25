@@ -19,6 +19,7 @@ ENV_PATH = CONFIG_DIR / ".env"
 KEYRING_SERVICE = "narrative_court"
 
 _DOTENV_LOADED = False
+_SECRET_CACHE: dict[str, str | None] = {}
 
 
 class Config:
@@ -102,26 +103,34 @@ def _load_dotenv_once() -> None:
 
 
 def get_secret(env_name: str) -> str | None:
-    """Resolve a secret: keyring first, then config/.env / process env."""
+    """Resolve a secret: keyring first, then config/.env / process env.
+
+    Cached process-wide to avoid repeated OS-keychain hits on every UI render and
+    generation call (F7); invalidated by ``set_secret``. External changes (keyring
+    CLI / hand-edited .env) are picked up on the next restart."""
+    if env_name in _SECRET_CACHE:
+        return _SECRET_CACHE[env_name]
+    value: str | None = None
     try:
         import keyring  # type: ignore
 
-        value = keyring.get_password(KEYRING_SERVICE, env_name)
-        if value:
-            return value
+        value = keyring.get_password(KEYRING_SERVICE, env_name) or None
     except Exception:
-        pass
-    _load_dotenv_once()
-    value = os.environ.get(env_name)
-    return value or None
+        value = None
+    if value is None:
+        _load_dotenv_once()
+        value = os.environ.get(env_name) or None
+    _SECRET_CACHE[env_name] = value
+    return value
 
 
 def set_secret(env_name: str, value: str) -> bool:
-    """Store a secret in the OS keyring (used by the onboarding wizard)."""
+    """Store a secret in the OS keyring (used by the Config screen)."""
     try:
         import keyring  # type: ignore
 
         keyring.set_password(KEYRING_SERVICE, env_name, value)
+        _SECRET_CACHE.pop(env_name, None)  # invalidate so the new value is read
         return True
     except Exception:
         return False

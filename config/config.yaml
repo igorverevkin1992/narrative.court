@@ -57,6 +57,9 @@ timeline:
 oxford:
   min_votes_quorum: 30                 # < 30 votes in either poll => no_quorum, win not counted
 
+logging:
+  retention_runs: 200                  # keep only the last N generation runs per model log (Block B.3)
+
 # ---------- Model roster (15) ----------
 # api_format: openai | anthropic | google | yandex | gigachat | falcon | hyperclova
 # base_url: null => provider default for that SDK

@@ -106,6 +106,15 @@ class Orchestrator:
         )
         target = self.logs_dir / ep
         target.mkdir(parents=True, exist_ok=True)
-        line = log.model_dump_json()
-        with (target / f"{model_id}.jsonl").open("a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
+        path = target / f"{model_id}.jsonl"
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(log.model_dump_json() + "\n")
+        # Retention: cap each model log to the last N runs (Block B.3).
+        retention = int(self.config.get("logging", "retention_runs", default=200))
+        if retention > 0:
+            try:
+                lines = path.read_text(encoding="utf-8").splitlines()
+                if len(lines) > retention:
+                    path.write_text("\n".join(lines[-retention:]) + "\n", encoding="utf-8")
+            except Exception:
+                pass

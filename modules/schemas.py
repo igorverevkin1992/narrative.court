@@ -171,9 +171,9 @@ class TimelineData(BaseModel):
 
 
 class GenParams(BaseModel):
-    temperature: float = 0.7
-    max_tokens: int = 800
-    quickfire_max_tokens: int = 60
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=800, ge=1, le=8192)
+    quickfire_max_tokens: int = Field(default=60, ge=1, le=8192)
     seed: int | None = None
 
 
@@ -259,12 +259,12 @@ class Topic(BaseModel):
 
 class OxfordDelta(BaseModel):
     episode_id: UUID
-    agree_before: float
-    agree_after: float
-    disagree_before: float
-    disagree_after: float
-    votes_before: int
-    votes_after: int
+    agree_before: float = Field(ge=0.0, le=100.0)
+    agree_after: float = Field(ge=0.0, le=100.0)
+    disagree_before: float = Field(ge=0.0, le=100.0)
+    disagree_after: float = Field(ge=0.0, le=100.0)
+    votes_before: int = Field(ge=0)
+    votes_after: int = Field(ge=0)
 
     @property
     def no_quorum(self) -> bool:
