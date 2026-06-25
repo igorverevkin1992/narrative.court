@@ -48,10 +48,14 @@ def export_timeline(
     fps: int = 30,
     sample_rate: int = 44100,
 ) -> dict:
-    """Generate and write all timeline artifacts.
+    """Generate and write all timeline artifacts (resilient, Block O.4).
 
-    Returns a dict with absolute paths and the built TimelineData. Raises
-    ValueError if the generated FCPXML is not well-formed.
+    The EDL + markers fallback is written FIRST so a malformed FCPXML can never
+    leave the operator without an importable timeline. The primary FCPXML is then
+    written and validated; if it is not well-formed the file is kept for
+    inspection but ``fcpxml_valid`` is ``False`` (no exception is raised).
+
+    Returns a dict with absolute paths, ``fcpxml_valid``, and the TimelineData.
     """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -59,23 +63,21 @@ def export_timeline(
     timeline: TimelineData = build_timeline(episode, fps=fps, sample_rate=sample_rate)
     episode.timeline_data = timeline
 
-    fcpxml = fcpxml_generator.generate_fcpxml(episode, timeline)
-    if not validate_fcpxml(fcpxml):
-        raise ValueError("Generated FCPXML is not well-formed")
-
-    edl = edl_generator.generate_edl(episode, timeline)
-    markers_md = edl_generator.generate_markers_md(episode, timeline)
-
-    fcpxml_path = out / f"{episode.slug}.fcpxml"
+    # Guaranteed-importable fallback first.
     edl_path = out / f"{episode.slug}.edl"
     markers_path = out / f"{episode.slug}_markers.md"
+    edl_path.write_text(edl_generator.generate_edl(episode, timeline), encoding="utf-8")
+    markers_path.write_text(edl_generator.generate_markers_md(episode, timeline), encoding="utf-8")
 
+    # Primary FCPXML: keep the file even if invalid, but flag it.
+    fcpxml = fcpxml_generator.generate_fcpxml(episode, timeline)
+    fcpxml_valid = validate_fcpxml(fcpxml)
+    fcpxml_path = out / f"{episode.slug}.fcpxml"
     fcpxml_path.write_text(fcpxml, encoding="utf-8")
-    edl_path.write_text(edl, encoding="utf-8")
-    markers_path.write_text(markers_md, encoding="utf-8")
 
     return {
         "fcpxml": str(fcpxml_path),
+        "fcpxml_valid": fcpxml_valid,
         "edl": str(edl_path),
         "markers_md": str(markers_path),
         "timeline": timeline,

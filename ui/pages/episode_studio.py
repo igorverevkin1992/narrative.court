@@ -20,11 +20,13 @@ from nicegui import run, ui
 
 from modules.config import Config
 from modules.episodes import objections
+from modules.episodes.diagnostics import refused_or_suppressed_rounds
 from modules.episodes.manager import (
     episode_dir,
     list_saved_episodes,
     load_episode,
     n_clips,
+    reset_tts_checkpoint,
     save_episode,
     step_export,
     step_generate,
@@ -33,8 +35,11 @@ from modules.episodes.manager import (
     step_smoke_test,
     step_tts,
     sync_quickfire_selection,
+    tts_checkpoint_summary,
 )
+from modules.leaderboard.service import episodes_pending_delta
 from modules.llm.adapters.base import SanctionsBlockedError
+from modules.quickfire.manager import all_below_threshold
 from modules.schemas import Episode, GenParams, ObjectionEvent, Side
 from ui.state import AppState
 
@@ -85,6 +90,18 @@ def render(state: AppState) -> None:
     ui.label("Полный воркфлоу из 10 шагов. Состояние автосохраняется после каждого шага.")\
         .classes("text-sm text-grey")
 
+    # --- O.5 soft warning: previous episodes awaiting an Oxford delta --------
+    try:
+        _pending = episodes_pending_delta(cfg)
+    except Exception:
+        _pending = []
+    if _pending:
+        with ui.card().classes("w-full bg-amber-1 q-mt-sm"):
+            ui.label(f"⏳ O.5: {len(_pending)} эпизод(ов) ждут Oxford-дельту "
+                     "(лидерборд не закрыт). Можно продолжать — это не блокировка.")\
+                .classes("text-sm")
+            ui.link("Ввести дельту → Leaderboard", "/leaderboard")
+
     # --- Resume an autosaved draft -------------------------------------------
     try:
         drafts = list_saved_episodes(cfg)
@@ -114,6 +131,17 @@ def render(state: AppState) -> None:
         if e is None or not e.rounds:
             ui.label("Эпизод ещё не сгенерирован (шаг 4).").classes("text-grey")
             return
+        problems = refused_or_suppressed_rounds(e)
+        if problems:
+            with ui.card().classes("w-full bg-red-1"):
+                ui.label("⚠ O.1: отказ/подавление рассуждения в основном раунде")\
+                    .classes("font-bold text-red")
+                for p in problems:
+                    ui.label(f"• [{p['round_id']}] {p['model_id']}: {p['flag_type']} — "
+                             f"{p['evidence'][:80]}").classes("text-xs")
+                ui.label("Рекомендация: вернитесь к шагу 3 (smoke-test/reframe) или "
+                         "перегенерируйте раунды (шаг 4) со сменой тезиса/пары.")\
+                    .classes("text-xs text-grey")
         starts = {}
         if e.timeline_data:
             starts = {c.clip_id: c.start_frames for c in e.timeline_data.clips}
@@ -182,6 +210,11 @@ def render(state: AppState) -> None:
             return
         threshold = float(cfg.get("quickfire", "variability_threshold", default=0.35))
         select_n = int(cfg.get("quickfire", "questions_selected", default=10))
+        if all_below_threshold(e.quickfire, threshold):
+            with ui.card().classes("w-full bg-red-1"):
+                ui.label("⚠ O.3: все ответы слишком похожи (variability < порога). "
+                         "Перегенерируйте квикфайр (шаг 4) или смените вопросы/пару моделей.")\
+                    .classes("text-sm text-red")
         ui.label(f"12 вопросов · variability score · выберите {select_n}. "
                  f"Рекомендованные (score ≥ {threshold}) отмечены.").classes("text-xs text-grey")
         boxes = []
@@ -413,7 +446,28 @@ def render(state: AppState) -> None:
         with ui.step("7. TTS (озвучка)"):
             tts_bar = ui.linear_progress(value=0.0, show_value=False).props("instant-feedback").classes("w-full")
             tts_status = ui.label("Готов к запуску.").classes("text-sm")
-            tts_btn = ui.button("Запустить TTS batch").props("color=primary")
+            ckpt_lbl = ui.label("").classes("text-xs text-grey")
+
+            def _refresh_ckpt():
+                e = ep()
+                if e is None:
+                    return
+                s = tts_checkpoint_summary(e, cfg)
+                ckpt_lbl.text = (f"Чекпойнт O.2: готово {s['done']} · ошибок {s['failed']} · "
+                                 f"всего {s['total']} · осталось {s['remaining']}")
+            _refresh_ckpt()
+
+            with ui.row().classes("items-center gap-2"):
+                tts_btn = ui.button("Запустить / возобновить TTS").props("color=primary")
+
+                def _reset_ckpt():
+                    if ep() is None:
+                        return
+                    existed = reset_tts_checkpoint(ep(), cfg)
+                    _refresh_ckpt()
+                    ui.notify("Чекпойнт сброшен — следующий запуск перегенерирует все клипы"
+                              if existed else "Чекпойнта не было", type="info")
+                ui.button("Сбросить чекпойнт", on_click=_reset_ckpt).props("flat color=warning")
 
             async def _run_tts():
                 e = ep()
@@ -421,7 +475,7 @@ def render(state: AppState) -> None:
                     ui.notify("Сначала сгенерируйте эпизод (шаг 4).", type="warning")
                     return
                 tts_btn.disable()
-                prog = {"i": 0, "n": n_clips(e), "msg": "", "running": True}
+                prog = {"i": 0, "n": n_clips(e), "msg": ""}
 
                 def _cb(i, n, msg):
                     prog.update(i=i, n=n, msg=msg)
@@ -435,7 +489,9 @@ def render(state: AppState) -> None:
                     await run.io_bound(step_tts, e, cfg, offline=offline.value, on_progress=_cb)
                 except Exception as exc:
                     timer.deactivate()
-                    tts_status.text = f"ОШИБКА: {exc} (batch возобновляем — нажмите ещё раз)"
+                    _refresh_ckpt()
+                    tts_status.text = (f"ОШИБКА: {exc} — нажмите «Возобновить» "
+                                       "(готовые клипы не перегенерируются)")
                     tts_status.classes(replace="text-sm text-red")
                     ui.notify(f"Ошибка TTS: {exc}", type="negative")
                     tts_btn.enable()
@@ -444,6 +500,7 @@ def render(state: AppState) -> None:
                 tts_bar.value = 1.0
                 tts_status.text = f"Готово ✓  {n_clips(e)} файлов в {episode_dir(e, cfg) / 'audio'}"
                 tts_status.classes(replace="text-sm text-green-600 font-bold")
+                _refresh_ckpt()
                 autosave()
                 ui.notify("Озвучка готова", type="positive")
                 tts_btn.enable()
@@ -516,15 +573,24 @@ def render(state: AppState) -> None:
                 }
                 review_panel.refresh()  # now shows timecodes
                 autosave()
-                exp_status.text = "Готово ✓"
-                exp_status.classes(replace="text-sm text-green-600 font-bold")
+                valid = exp.get("fcpxml_valid", True)
+                exp_status.text = "Готово ✓" if valid else "Готово — FCPXML невалиден (см. O.4 ниже)"
+                exp_status.classes(replace="text-sm " + (
+                    "text-green-600 font-bold" if valid else "text-orange-700 font-bold"))
                 with exp_result:
-                    ui.label(f"FCPXML: {exp['fcpxml']}").classes("text-xs")
-                    ui.label(f"EDL: {exp['edl']}").classes("text-xs")
+                    if not valid:
+                        ui.label("⚠ O.4: FCPXML не прошёл проверку и может не импортироваться в "
+                                 "DaVinci. Используйте EDL + markers.md (гарантированный fallback).")\
+                            .classes("text-sm text-red")
+                    ui.label(f"FCPXML (primary){' ✓' if valid else ' — невалиден'}: {exp['fcpxml']}")\
+                        .classes("text-xs")
+                    ui.label(f"EDL (fallback): {exp['edl']}").classes("text-xs")
                     ui.label(f"Маркеры: {exp['markers_md']}").classes("text-xs")
                     ui.label(f"Сценарий: {scr['script']}").classes("text-xs")
                     ui.link("Открыть Script Viewer →", "/script")
-                ui.notify("Таймлайн экспортирован", type="positive")
+                ui.notify("Таймлайн экспортирован" if valid else
+                          "Экспорт готов, но FCPXML невалиден — используйте EDL (O.4)",
+                          type="positive" if valid else "warning")
                 exp_btn.enable()
             exp_btn.on_click(_run_export)
             with ui.stepper_navigation():

@@ -144,3 +144,14 @@ def is_first_run(db_path: Path | None = None) -> bool:
         except Exception:
             return True
     return not Path(db_path).exists()
+
+
+def missing_keys(config: Config) -> list[str]:
+    """Block O.7: API key env names (model keys + ElevenLabs) with no secret set.
+
+    Drives the Dashboard readiness banner so a non-technical operator knows which
+    keys to add on the Config screen before live generation.
+    """
+    names = {m.get("api_key_env") for m in config.models if m.get("api_key_env")}
+    names.add("ELEVENLABS_API_KEY")
+    return sorted(n for n in names if not get_secret(n))

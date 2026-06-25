@@ -17,7 +17,7 @@ from modules.leaderboard.engine import (
     recompute,
 )
 from modules.leaderboard.export import to_csv, to_markdown
-from modules.schemas import Episode, LeaderboardEntry, OxfordDelta, Side
+from modules.schemas import Episode, EpisodeStatus, LeaderboardEntry, OxfordDelta, Side
 
 
 def record_delta(episode: Episode, delta: OxfordDelta) -> dict:
@@ -36,6 +36,20 @@ def record_delta(episode: Episode, delta: OxfordDelta) -> dict:
         "no_quorum": delta.no_quorum,
     }
     return episode.leaderboard_result
+
+
+def episodes_pending_delta(config: Config) -> list[Episode]:
+    """Block O.5: exported/published episodes with no recorded Oxford delta.
+
+    Used for a soft warning (never a hard block) when the operator starts the
+    next episode while the previous one's jury result is still open.
+    """
+    pending: list[Episode] = []
+    for ep in list_saved_episodes(config):
+        if ep.status in (EpisodeStatus.EXPORTED, EpisodeStatus.PUBLISHED):
+            if not (ep.leaderboard_result or {}).get("delta"):
+                pending.append(ep)
+    return pending
 
 
 def collect_outcomes(config: Config) -> list[EpisodeOutcome]:

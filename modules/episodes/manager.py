@@ -93,6 +93,32 @@ def n_clips(episode: Episode) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# TTS checkpoint inspection (Block O.2)
+# --------------------------------------------------------------------------- #
+def tts_checkpoint_path(episode: Episode, config: Config) -> Path:
+    return episode_dir(episode, config) / "tts_progress.json"
+
+
+def tts_checkpoint_summary(episode: Episode, config: Config) -> dict:
+    """{done, failed, total, remaining} from the resumable TTS checkpoint."""
+    state = TTSEngine._load_checkpoint(tts_checkpoint_path(episode, config))
+    total = n_clips(episode)
+    done = sum(1 for v in state.values() if v == "done")
+    failed = sum(1 for v in state.values() if v == "failed")
+    return {"done": done, "failed": failed, "total": total, "remaining": max(0, total - done)}
+
+
+def reset_tts_checkpoint(episode: Episode, config: Config) -> bool:
+    """Clear the checkpoint so the next TTS run regenerates every clip. Returns
+    True if a checkpoint existed."""
+    p = tts_checkpoint_path(episode, config)
+    if p.exists():
+        p.unlink()
+        return True
+    return False
+
+
+# --------------------------------------------------------------------------- #
 # Generator / orchestrator construction
 # --------------------------------------------------------------------------- #
 def make_generator(

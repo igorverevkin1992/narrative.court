@@ -43,13 +43,14 @@ data/episodes/<slug>/
 python -m pytest tests/ -q
 ```
 
-Покрытие (52 теста): Behaviour Detector (`test_detector.py`), Timeline Exporter
+Покрытие (60 тестов): Behaviour Detector (`test_detector.py`), Timeline Exporter
 (`test_exporter.py`), вариативность/дрейф/лидерборд/чек-лист/метаданные
 (`test_core.py`), end-to-end offline-конвейер (`test_pipeline.py`), пошаговая
 оркестрация + авто-сейв + objection/quickfire-resync (`test_studio_steps.py`),
 Oxford-дельта/recompute/метрики/экспорт + Topic CRUD (`test_leaderboard_topics.py`),
 slug-traversal/FCPXML-escape/markers-sanitize/atomic-save (`test_security.py`),
-адаптеры/классификация ошибок/GigaChat-403 (`test_adapters.py`).
+адаптеры/классификация ошибок/GigaChat-403 (`test_adapters.py`), краевые сценарии
+O.1–O.7 (`test_edge_cases.py`), полный 10-шаговый поток (`test_integration.py`).
 
 ## Безопасность и устойчивость
 
@@ -60,6 +61,12 @@ slug-traversal/FCPXML-escape/markers-sanitize/atomic-save (`test_security.py`),
 (анти-XXE), выделенное предупреждение `SanctionsBlockedError` в UI, безопасная
 подстановка шаблонов, HTML-escape сценария (анти-XSS), ввод ключей в keyring из
 Config-экрана. Сервер биндится на `127.0.0.1` (не публиковать наружу).
+
+Краевые сценарии (ТЗ Block O.1–O.7) доведены до UI: O.1 callout REFUSED/SUPPRESSED
+в ревью, O.2 сводка+сброс TTS-чекпойнта, O.3 баннер «ответы слишком похожи»,
+O.4 устойчивый экспорт (EDL+markers пишутся первыми, FCPXML с флагом валидности),
+O.5 мягкое предупреждение об эпизодах без Oxford-дельты, O.6 sanctions-предупреждение,
+O.7 readiness-баннер о незаданных ключах.
 
 ## Статус по фазам (см. ТЗ Раздел 8)
 
