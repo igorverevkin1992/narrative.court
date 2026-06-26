@@ -5,6 +5,7 @@ from __future__ import annotations
 from nicegui import ui
 
 from modules.config import get_secret, mask, set_secret
+from modules.generator.episode_generator import PROMPTS_DIR, load_prompt
 from ui.state import AppState
 
 
@@ -75,6 +76,29 @@ def render(state: AppState) -> None:
         ui.label(f"Пресеты: {cfg.tts_defaults.get('presets_file')}")
         ui.label(f"Формат: {cfg.tts_defaults.get('output_format')} · "
                  f"модель: {cfg.tts_defaults.get('el_model_id')}")
+
+    # --- System prompts editor (I5) -----------------------------------------
+    with ui.card().classes("w-full q-mt-md"):
+        ui.label("Системные промпты (anti-hedge) — редактирование (I5)").classes("font-bold")
+        prompt_opts = {"prosecution_s1": "Prosecution / S1", "defense_s1": "Defense / S1",
+                       "prosecution_s2": "Prosecution / S2", "defense_s2": "Defense / S2"}
+        psel = ui.select(prompt_opts, value="prosecution_s1").classes("w-72")
+        editor = ui.textarea("").props("rows=12").classes("w-full")
+
+        def _load_prompt():
+            side, season = psel.value.rsplit("_s", 1)
+            editor.value = load_prompt(side, int(season))
+
+        def _save_prompt():
+            if "{thesis}" not in editor.value:
+                ui.notify("Промпт должен содержать плейсхолдер {thesis}", type="warning")
+                return
+            side, season = psel.value.rsplit("_s", 1)
+            (PROMPTS_DIR / f"{side}_s{season}.txt").write_text(editor.value, encoding="utf-8")
+            ui.notify("Промпт сохранён", type="positive")
+        psel.on_value_change(lambda _: _load_prompt())
+        _load_prompt()
+        ui.button("Сохранить промпт", on_click=_save_prompt).props("color=primary")
 
     # --- Paths --------------------------------------------------------------
     with ui.card().classes("w-full q-mt-md"):

@@ -80,3 +80,30 @@ def render(state: AppState) -> None:
                         ui.button(icon="arrow_downward", on_click=_down).props("flat dense").classes("text-grey")
 
     grid()
+
+    # --- Batch run (I7) -----------------------------------------------------
+    with ui.card().classes("w-full q-mt-md"):
+        ui.label("Пакетный прогон по плану (I7)").classes("font-bold")
+        b_offline = ui.checkbox("Offline (mock)", value=True)
+        b_log = ui.log(max_lines=200).classes("w-full h-40 bg-black text-green-400 text-xs")
+        b_btn = ui.button("Прогнать все эпизоды по порядку").props("color=primary")
+
+        async def _batch():
+            from modules.episodes.manager import run_batch_episodes
+            b_btn.disable()
+            b_log.clear()
+            eps = [by_slug[s] for s in order]
+            b_log.push(f"Старт: {len(eps)} эпизод(ов), offline={b_offline.value}")
+            try:
+                results = await run_batch_episodes(eps, cfg, offline=b_offline.value,
+                                                   on_log=lambda m: b_log.push(m))
+            except Exception as exc:
+                b_log.push(f"ОШИБКА батча: {exc}")
+                b_btn.enable()
+                return
+            ok = sum(1 for r in results if r.get("ok"))
+            b_log.push(f"Готово: {ok}/{len(results)} успешно")
+            ui.notify(f"Батч завершён: {ok}/{len(results)}", type="positive")
+            grid.refresh()
+            b_btn.enable()
+        b_btn.on_click(_batch)

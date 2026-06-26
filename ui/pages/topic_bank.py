@@ -6,9 +6,10 @@ in the SQLite topics table; the table supports status edit, filtering, delete.
 """
 from __future__ import annotations
 
-from nicegui import ui
+from nicegui import run, ui
 
 from modules.schemas import Topic, TopicChecklist, TopicStatus
+from modules.topics.assistant import draft_topic
 from modules.topics.bank import list_topics, save_topic
 from modules.topics.checklist import evaluate
 from ui.components.progress import status_badge
@@ -22,6 +23,30 @@ def render(state: AppState) -> None:
     cfg = state.config
     model_opts = {m["id"]: m["display_name"] for m in cfg.models}
     ui.label("Topic Bank").classes("text-2xl font-bold")
+
+    # ----------------------------------------------------------- LLM assistant (I10)
+    with ui.card().classes("w-full"):
+        ui.label("Ассистент: сгенерировать пак темы из тезиса (I10)").classes("font-bold")
+        a_thesis = ui.input("Тезис для генерации").classes("w-full")
+        a_offline = ui.checkbox("Offline (mock)", value=True)
+
+        async def _gen_pack():
+            if not a_thesis.value.strip():
+                ui.notify("Укажите тезис", type="warning")
+                return
+            try:
+                topic = await run.io_bound(draft_topic, a_thesis.value.strip(), cfg,
+                                           offline=a_offline.value)
+                save_topic(topic)
+            except Exception as exc:
+                ui.notify(f"Ошибка ассистента: {exc}", type="negative")
+                return
+            a_thesis.value = ""
+            ui.notify(f"Пак создан: {len(topic.quickfire_bank)} вопросов, "
+                      f"{len(topic.thesis_variants)} вариантов (auto: {topic.checklist.auto_status})",
+                      type="positive")
+            bank_table.refresh()
+        ui.button("Сгенерировать пак", on_click=_gen_pack).props("color=primary")
 
     # ----------------------------------------------------------- create form
     with ui.card().classes("w-full"):

@@ -21,13 +21,18 @@ from nicegui import run, ui
 from modules.config import Config
 from modules.episodes import objections
 from modules.episodes.diagnostics import refused_or_suppressed_rounds
+from modules.economics import episode_cost_from_logs, estimate_episode_cost
 from modules.episodes.manager import (
     episode_dir,
+    export_bundle,
+    generate_variants,
     list_saved_episodes,
     load_episode,
     n_clips,
+    regenerate_replica,
     reset_tts_checkpoint,
     save_episode,
+    select_variant,
     step_export,
     step_generate,
     step_metadata,
@@ -165,6 +170,30 @@ def render(state: AppState) -> None:
                                 ui.badge(fl.flag_type, color=_FLAG_COLORS.get(fl.flag_type, "grey"))\
                                     .tooltip(f"{fl.rule_triggered}: {fl.evidence[:80]}")
                         ui.label(rep.used_text or rep.text).classes("text-sm")
+                        if rep.audio_path and Path(rep.audio_path).exists():
+                            ui.audio(f"/media/{e.slug}/audio/{k}.wav").classes("w-full")  # I4
+                        with ui.row().classes("items-center gap-2"):
+                            async def _regen(rid=k):
+                                await regenerate_replica(e, cfg, rid, offline=offline.value)
+                                autosave()
+                                review_panel.refresh()
+                                ui.notify(f"{rid}: перегенерировано", type="positive")
+
+                            async def _variants(rid=k):
+                                await generate_variants(e, cfg, rid, n=3, offline=offline.value)
+                                autosave()
+                                review_panel.refresh()
+                            ui.button("Перегенерировать", on_click=_regen).props("flat dense color=primary")
+                            ui.button("3 варианта", on_click=_variants).props("flat dense")
+                        for v in rep.variants:
+                            with ui.row().classes("items-center gap-2"):
+                                def _pick(text=v, rid=k):
+                                    select_variant(e, rid, text)
+                                    autosave()
+                                    review_panel.refresh()
+                                    ui.notify("Вариант выбран", type="positive")
+                                ui.button("Выбрать", on_click=_pick).props("flat dense color=positive")
+                                ui.label(v[:120]).classes("text-xs text-grey")
 
     @ui.refreshable
     def objection_panel() -> None:
@@ -316,6 +345,19 @@ def render(state: AppState) -> None:
                 maxtok = ui.number("max_tokens", value=800, min=64, step=50).classes("w-32")
                 seed = ui.number("seed (0=random)", value=42, min=0).classes("w-32")
             offline = ui.checkbox("Offline (mock, без API-ключей)", value=state.offline_default)
+            cost_lbl = ui.label("").classes("text-sm text-grey")
+
+            def _estimate():
+                tmp = Episode(
+                    thesis=(thesis.value or "Tmp thesis"), slug="ep_estimate_tmp",
+                    prosecution_model_id=pros.value, defense_model_id=deff.value,
+                    gen_params=GenParams(temperature=float(temp.value), max_tokens=int(maxtok.value),
+                                         seed=(int(seed.value) or None)))
+                est = estimate_episode_cost(tmp, cfg)
+                cost_lbl.text = (f"≈ Оценка стоимости: ${est['total_usd']} "
+                                 f"(LLM ${est['llm_usd']} + TTS ${est['tts_usd']}); "
+                                 f"вывод ~{est['est_output_tokens']} ток.")
+            ui.button("Оценить стоимость (I6)", on_click=_estimate).props("flat dense color=primary")
             with ui.stepper_navigation():
                 ui.button("Назад", on_click=stepper.previous).props("flat")
 
@@ -407,9 +449,12 @@ def render(state: AppState) -> None:
                 ctx.pop("claims", None)
                 autosave()
                 _refresh_all()
+                est = estimate_episode_cost(ep(), cfg)
+                act = episode_cost_from_logs(ep(), cfg)
                 gen_done.text = (f"Готово ✓  Реплик: {n_clips(ep())} · "
                                  f"Флагов поведения: {len(ep().behaviour_flags)} · "
-                                 f"Квикфайр-обменов: {len(ep().quickfire)}")
+                                 f"Квикфайр-обменов: {len(ep().quickfire)} · "
+                                 f"≈${est['total_usd']} оценка / ${act['total_usd']} факт (I6)")
                 gen_done.classes(replace="text-green-600 font-bold")
                 ui.notify("Раунды сгенерированы", type="positive")
                 gen_btn.enable()
@@ -587,7 +632,16 @@ def render(state: AppState) -> None:
                     ui.label(f"EDL (fallback): {exp['edl']}").classes("text-xs")
                     ui.label(f"Маркеры: {exp['markers_md']}").classes("text-xs")
                     ui.label(f"Сценарий: {scr['script']}").classes("text-xs")
+                    if exp.get("otio"):
+                        ui.label(f"OTIO (native DaVinci): {exp['otio']}").classes("text-xs")  # I8
                     ui.link("Открыть Script Viewer →", "/script")
+
+                    def _bundle():  # I9
+                        path = export_bundle(e, cfg)
+                        ui.notify(f"Publish-pack собран: {path}", type="positive")
+                        ui.download(path)
+                    ui.button("📦 Publish pack (zip для монтажёра)", on_click=_bundle)\
+                        .props("flat color=primary")
                 ui.notify("Таймлайн экспортирован" if valid else
                           "Экспорт готов, но FCPXML невалиден — используйте EDL (O.4)",
                           type="positive" if valid else "warning")

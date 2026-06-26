@@ -1,7 +1,7 @@
 """NiceGUI application shell: header navigation + 8 page routes (Module 13)."""
 from __future__ import annotations
 
-from nicegui import ui
+from nicegui import app, ui
 
 from modules.config import Config
 from ui.pages import (
@@ -43,6 +43,11 @@ def _frame(active: str) -> None:
 def init(config: Config) -> None:
     """Wire config into state and register all routes."""
     state.config = config
+
+    # Serve episode audio so the UI can preview WAVs in-browser (I4).
+    media_dir = config.resolve_path("episodes_dir")
+    media_dir.mkdir(parents=True, exist_ok=True)
+    app.add_media_files("/media", str(media_dir))
 
     @ui.page("/")
     def _dashboard():

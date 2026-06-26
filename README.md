@@ -45,7 +45,7 @@ data/episodes/<slug>/
 python -m pytest tests/ -q
 ```
 
-Покрытие (66 тестов): Behaviour Detector (`test_detector.py`), Timeline Exporter
+Покрытие (78 тестов): Behaviour Detector (`test_detector.py`), Timeline Exporter
 (`test_exporter.py`), вариативность/дрейф/лидерборд/чек-лист/метаданные
 (`test_core.py`), end-to-end offline-конвейер (`test_pipeline.py`), пошаговая
 оркестрация + авто-сейв + objection/quickfire-resync (`test_studio_steps.py`),
@@ -53,7 +53,21 @@ Oxford-дельта/recompute/метрики/экспорт + Topic CRUD (`test_
 slug-traversal/FCPXML-escape/markers-sanitize/atomic-save (`test_security.py`),
 адаптеры/классификация ошибок/GigaChat-403 (`test_adapters.py`), краевые сценарии
 O.1–O.7 (`test_edge_cases.py`), полный 10-шаговый поток (`test_integration.py`),
-TTS-resume-длительность/валидаторы/delimiter/secret-cache (`test_audit2.py`).
+TTS-resume-длительность/валидаторы/delimiter/secret-cache (`test_audit2.py`),
+экономика/OTIO/publish-pack (`test_improvements.py`), мульти-вариант/методы/
+ассист/батч (`test_improvements2.py`).
+
+## Функциональные улучшения
+
+- **I1** мульти-вариантная генерация + перегенерация реплики (выбор лучшего, ТЗ B.3).
+- **I2** подключаемые методы variability/drift (`lexical` | `llm_judge` через config).
+- **I4** аудио-превью реплик в браузере (`/media` + `ui.audio`).
+- **I5** редактор anti-hedge системных промптов на Config-экране.
+- **I6** оценка и факт стоимости/токенов на эпизод (config `pricing`).
+- **I7** пакетный прогон эпизодов из Planner.
+- **I8** OTIO-экспорт (native DaVinci) под флагом `emit_otio`.
+- **I9** publish-pack: zip эпизода + handoff-README для монтажёра.
+- **I10** LLM-ассист Topic Bank (варианты/вопросы/якоря/пара/риски из тезиса).
 
 CI: `.github/workflows/ci.yml` гоняет весь offline-набор на Python 3.11/3.12 при
 каждом push/PR. Ставится лёгкий `requirements-test.txt` (pydantic/PyYAML/SQLAlchemy/
