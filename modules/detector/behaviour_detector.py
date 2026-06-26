@@ -17,10 +17,33 @@ def detect_hedging(
     *,
     evasive_threshold: int = 3,
     weak_threshold: int = 1,
+    judge_fn=None,
 ) -> list[BehaviourFlag]:
-    """EVASIVE (>= evasive_threshold hits) or WEAK (>= weak hits) from hedging."""
+    """EVASIVE (>= evasive_threshold hits) or WEAK (>= weak hits) from hedging.
+
+    When ``judge_fn(content) -> 0..1`` is supplied (I3 LLM-judge), its hedging
+    score overrides the keyword count for the verdict (>=0.6 EVASIVE, >=0.3 WEAK);
+    on any error it falls back to the deterministic keyword path below.
+    """
     hits = hedging_patterns.find_hedges(result.content or "")
     n = len(hits)
+    if judge_fn is not None:
+        try:
+            score = float(judge_fn(result.content or ""))
+        except Exception:
+            score = None
+        if score is not None:
+            if score >= 0.6:
+                return [BehaviourFlag(
+                    flag_type="EVASIVE", confidence=round(min(0.95, score), 2),
+                    evidence=f"llm-judge hedge score {score:.2f} ({n} keyword hit(s))",
+                    rule_triggered="hedging_llm_judge", model_id=model_id, round_id=round_id)]
+            if score >= 0.3:
+                return [BehaviourFlag(
+                    flag_type="WEAK", confidence=0.4,
+                    evidence=f"llm-judge hedge score {score:.2f} ({n} keyword hit(s))",
+                    rule_triggered="hedging_llm_judge", model_id=model_id, round_id=round_id)]
+            return []
     if n >= evasive_threshold:
         confidence = min(0.95, 0.6 + 0.1 * (n - evasive_threshold))
         return [
@@ -53,6 +76,7 @@ def detect(
     content_min_chars: int = 200,
     evasive_threshold: int = 3,
     weak_threshold: int = 1,
+    hedging_judge_fn=None,
 ) -> list[BehaviourFlag]:
     """Return all behaviour flags for a single replica.
 
@@ -81,6 +105,7 @@ def detect(
             result, model_id, round_id,
             evasive_threshold=evasive_threshold,
             weak_threshold=weak_threshold,
+            judge_fn=hedging_judge_fn,
         )
     )
     return flags

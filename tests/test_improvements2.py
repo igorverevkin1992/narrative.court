@@ -100,3 +100,23 @@ async def test_run_batch_episodes(tmp_path):
     assert len(results) == 2
     assert all(r["ok"] for r in results)
     assert all(r["n_clips"] > 0 for r in results)
+
+
+# --- I3 hedging LLM-judge ---------------------------------------------------
+def test_i3_hedging_llm_judge():
+    from modules.detector.behaviour_detector import detect_hedging
+    from modules.schemas import GenerationResult
+    res = GenerationResult(content="A confident, direct claim with no hedging.", model_id="x")
+
+    evasive = detect_hedging(res, "x", "r1", judge_fn=lambda c: 0.8)
+    assert evasive and evasive[0].flag_type == "EVASIVE"
+    assert evasive[0].rule_triggered == "hedging_llm_judge"
+
+    weak = detect_hedging(res, "x", "r1", judge_fn=lambda c: 0.4)
+    assert weak and weak[0].flag_type == "WEAK"
+
+    assert detect_hedging(res, "x", "r1", judge_fn=lambda c: 0.0) == []
+
+    def boom(c):
+        raise RuntimeError("judge down")
+    assert detect_hedging(res, "x", "r1", judge_fn=boom) == []  # fallback: no keyword hits

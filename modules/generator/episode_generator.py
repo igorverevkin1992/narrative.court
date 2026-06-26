@@ -105,6 +105,7 @@ class EpisodeGenerator:
             content_min_chars=int(self.det.get("deepseek_content_min_chars", 200)),
             evasive_threshold=int(self.det.get("hedging_evasive_threshold", 3)),
             weak_threshold=int(self.det.get("hedging_weak_threshold", 1)),
+            hedging_judge_fn=self._hedging_judge(),
         )
         self.on_log(f"[{round_id}] {model_id}: {len(result.content)} chars, {len(flags)} flag(s)")
         return Replica(
@@ -122,6 +123,21 @@ class EpisodeGenerator:
             system = ("Rate how OPPOSED two debate answers are on a 0-10 integer scale "
                       "(10 = directly contradictory). Reply with ONLY the number.")
             res = self.orch.generate(judge_id, system, f"A: {a}\nB: {b}", 0.0, 8)
+            m = re.search(r"\d+(?:\.\d+)?", res.content or "")
+            return float(m.group()) / 10.0 if m else 0.0
+
+        return judge
+
+    def _hedging_judge(self):
+        """LLM-judge rating hedging 0..1 (I3); None when offline or disabled."""
+        if self.orch.offline or not self.det.get("hedging_llm_judge"):
+            return None
+        judge_id = self.config.get("translation_corrector", "model_id", default="gemini-3.1-pro")
+
+        def judge(content: str) -> float:
+            system = ("Rate how much this debate reply HEDGES or avoids committing on a 0-10 "
+                      "scale (10 = maximally evasive). Reply with ONLY the number.")
+            res = self.orch.generate(judge_id, system, content[:2000], 0.0, 8)
             m = re.search(r"\d+(?:\.\d+)?", res.content or "")
             return float(m.group()) / 10.0 if m else 0.0
 

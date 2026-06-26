@@ -42,6 +42,7 @@ detector:
   deepseek_content_min_chars: 200      # MIN_CONTENT_LEN companion threshold
   hedging_evasive_threshold: 3         # >=3 hedging hits => EVASIVE
   hedging_weak_threshold: 1            # 1..2 hedging hits => WEAK
+  hedging_llm_judge: false             # I3: also rate hedging via Gemini (live only; off => keyword)
 
 translation:
   drift_method: "keyword_overlap"      # one of: keyword_overlap | embedding | llm_judge
