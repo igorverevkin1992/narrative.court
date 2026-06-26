@@ -126,6 +126,7 @@ class Replica(BaseModel):
     audio_path: str | None = None
     duration_sec: float | None = None
     flags: list[BehaviourFlag] = Field(default_factory=list)
+    variants: list[str] = Field(default_factory=list)   # alternative takes (I1)
 
 
 class QuickfireExchange(BaseModel):

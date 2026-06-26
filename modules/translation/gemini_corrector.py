@@ -49,12 +49,16 @@ def correct(
     needs_translation: bool,
     corrector_fn: Callable[[str, str], str] | None = None,
     threshold: float = 0.70,
+    drift_method: str = "keyword_overlap",
+    drift_judge_fn: Callable[[str, str], float] | None = None,
 ) -> TranslationResult:
     """Apply grammar correction with drift guard.
 
     ``corrector_fn(system_prompt, text) -> corrected_text`` performs the Gemini
-    call. If ``needs_translation`` is False or no corrector is supplied, the
-    original text is used unchanged.
+    call. ``drift_method`` selects the drift backend (keyword_overlap | llm_judge,
+    I2); ``drift_judge_fn(orig, corrected) -> 0..1`` is the LLM drift score. If
+    ``needs_translation`` is False or no corrector is supplied, the original text
+    is used unchanged.
     """
     if not needs_translation or corrector_fn is None:
         return TranslationResult(
@@ -75,7 +79,14 @@ def correct(
             used_text=original_text, correction_applied=False,
         )
 
-    drift, score = detect_drift(original_text, corrected, threshold)
+    if drift_method == "llm_judge" and drift_judge_fn is not None:
+        try:
+            score = round(max(0.0, min(1.0, float(drift_judge_fn(original_text, corrected)))), 4)
+            drift = score > (1.0 - threshold)
+        except Exception:
+            drift, score = detect_drift(original_text, corrected, threshold)
+    else:
+        drift, score = detect_drift(original_text, corrected, threshold)
     used = original_text if drift else corrected
     return TranslationResult(
         original_text=original_text, corrected_text=corrected,

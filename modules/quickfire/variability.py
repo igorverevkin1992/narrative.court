@@ -72,3 +72,18 @@ def variability_score(answer_a: str, answer_b: str) -> float:
 
     score = 0.45 * jaccard + 0.15 * len_delta + 0.25 * antonym + 0.15 * numeric
     return round(min(1.0, score), 4)
+
+
+def score_pair(answer_a, answer_b, *, method: str = "lexical", judge_fn=None) -> float:
+    """Variability score in [0, 1] via the configured method (Block E.1 / I2).
+
+    ``method="llm_judge"`` calls ``judge_fn(a, b) -> 0..1`` (e.g. a Gemini call
+    that rates opposition); any error falls back to the deterministic lexical
+    score, so offline and failures degrade gracefully.
+    """
+    if method == "llm_judge" and judge_fn is not None:
+        try:
+            return round(max(0.0, min(1.0, float(judge_fn(answer_a, answer_b)))), 4)
+        except Exception:
+            pass
+    return variability_score(answer_a, answer_b)

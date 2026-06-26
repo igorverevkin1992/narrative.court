@@ -6,7 +6,7 @@ generation max_tokens; this is the post-trim safety net).
 """
 from __future__ import annotations
 
-from modules.quickfire.variability import variability_score
+from modules.quickfire.variability import score_pair, variability_score
 from modules.schemas import QuickfireExchange
 
 WORD_BUDGET = 42  # ~15 s of speech at ~160 wpm
@@ -23,15 +23,18 @@ def score_and_select(
     exchanges: list[QuickfireExchange],
     select: int = 10,
     threshold: float = 0.35,
+    *,
+    method: str = "lexical",
+    judge_fn=None,
 ) -> list[QuickfireExchange]:
     """Score every exchange, mark the top ``select`` as recommended.
 
     Returns the same list (mutated) sorted by descending variability score.
-    Exchanges below ``threshold`` are flagged via ``over_limit`` left untouched
-    but never recommended once we exceed ``select``.
+    ``method``/``judge_fn`` select the scoring backend (lexical | llm_judge, I2).
     """
     for ex in exchanges:
-        ex.variability_score = variability_score(ex.prosecution_answer, ex.defense_answer)
+        ex.variability_score = score_pair(
+            ex.prosecution_answer, ex.defense_answer, method=method, judge_fn=judge_fn)
 
     ranked = sorted(exchanges, key=lambda e: e.variability_score, reverse=True)
     for i, ex in enumerate(ranked):

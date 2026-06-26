@@ -15,6 +15,7 @@ episode folder, giving the UI autosave + resume (Block L.2, O.2).
 from __future__ import annotations
 
 import os
+import zipfile
 from pathlib import Path
 from typing import Callable
 
@@ -196,6 +197,41 @@ async def step_generate(
     return episode
 
 
+async def regenerate_replica(episode: Episode, config: Config, round_id: str, *,
+                             offline: bool = True, seed: int | None = None) -> Replica:
+    """I1: regenerate a single round's reply, keeping the previous text as a variant."""
+    gen = make_generator(episode, config, offline=offline)
+    old = episode.rounds.get(round_id, [None])[0]
+    rep = await gen.regenerate_round(episode, round_id, seed=seed)
+    if old is not None:
+        rep.variants = list(old.variants) + [old.text]
+    episode.rounds[round_id] = [rep]
+    return rep
+
+
+async def generate_variants(episode: Episode, config: Config, round_id: str, n: int = 2, *,
+                            offline: bool = True) -> list[str]:
+    """I1: produce N alternative takes for a round (current text unchanged) so the
+    operator can pick the best one."""
+    gen = make_generator(episode, config, offline=offline)
+    base = episode.gen_params.seed or 0
+    texts: list[str] = []
+    for i in range(max(1, n)):
+        rep = await gen.regenerate_round(episode, round_id, seed=base + i + 1)
+        texts.append(rep.text)
+    episode.rounds[round_id][0].variants = texts
+    return texts
+
+
+def select_variant(episode: Episode, round_id: str, text: str) -> None:
+    """I1: adopt a chosen variant as the round's reply (manual selection, ТЗ B.3)."""
+    rep = episode.rounds[round_id][0]
+    if rep.text != text:
+        rep.variants = [t for t in ([rep.text] + rep.variants) if t != text]
+    rep.text = text
+    rep.used_text = text
+
+
 def step_tts(
     episode: Episode,
     config: Config,
@@ -234,13 +270,57 @@ def step_tts(
 
 
 def step_export(episode: Episode, config: Config) -> dict:
-    """Studio step 9: FCPXML (primary) + EDL + markers from current state."""
+    """Studio step 9: FCPXML (primary) + EDL + markers (+ optional OTIO) from state."""
     d = episode_dir(episode, config)
     fps = int(config.get("timeline", "fps", default=30))
     sample_rate = int(config.get("timeline", "audio_sample_rate", default=44100))
-    res = export_timeline(episode, d / "timeline", fps=fps, sample_rate=sample_rate)
+    emit_otio = bool(config.get("timeline", "emit_otio", default=False))
+    res = export_timeline(episode, d / "timeline", fps=fps, sample_rate=sample_rate,
+                          emit_otio=emit_otio)
     episode.status = EpisodeStatus.EXPORTED
     return res
+
+
+def _handoff_readme(episode: Episode) -> str:
+    return (
+        f"# {episode.slug} — editor handoff\n\n"
+        f"Motion: {episode.thesis}\n\n"
+        "## Timeline\n"
+        "- Import `timeline/<slug>.fcpxml` (primary) into DaVinci Resolve 19. If it does\n"
+        "  not import cleanly, use `timeline/<slug>.edl` + `<slug>_markers.md`, or\n"
+        "  `timeline/<slug>.otio` (native import).\n"
+        "- 5 audio tracks expected: HOST_VOICE (placeholder), PROSECUTION, DEFENSE,\n"
+        "  SFX_MARKERS, MUSIC_BED.\n\n"
+        "## Audio\n- `audio/*.wav` — one clip per round/reply, named by round id.\n\n"
+        "## Script\n- `script/episode_script.md` — full script with flags + timecodes.\n"
+        "- `script/host_cues.md` — host voice-over cues.\n\n"
+        "## Markers legend\n"
+        "OBJECTION_SUSTAINED / OBJECTION_OVERRULED, REFUSED, SUPPRESSED, EVASIVE, WEAK,\n"
+        "ROUND_START_N, POINT_N.\n"
+    )
+
+
+def export_bundle(episode: Episode, config: Config) -> str:
+    """I9: zip the episode's audio/script/timeline + a handoff README for the editor.
+    Returns the path to the created .zip in the exports dir."""
+    d = episode_dir(episode, config)
+    exports = config.resolve_path("exports_dir")
+    exports.mkdir(parents=True, exist_ok=True)
+    (d / "HANDOFF.md").write_text(_handoff_readme(episode), encoding="utf-8")
+
+    zip_path = exports / f"{episode.slug}_pack.zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for sub in ("audio", "script", "timeline"):
+            base = d / sub
+            if base.exists():
+                for f in sorted(base.rglob("*")):
+                    if f.is_file():
+                        zf.write(f, arcname=str(f.relative_to(d)))
+        for top in ("HANDOFF.md", "episode.json"):
+            f = d / top
+            if f.exists():
+                zf.write(f, arcname=top)
+    return str(zip_path)
 
 
 def step_script(episode: Episode, config: Config) -> dict:
@@ -303,3 +383,22 @@ async def run_full_pipeline(
         "n_clips": n_clips(episode),
         "n_flags": len(episode.behaviour_flags),
     }
+
+
+async def run_batch_episodes(episodes: list[Episode], config: Config, *,
+                             offline: bool = True, on_log: LogFn | None = None) -> list[dict]:
+    """I7: run the full pipeline for several episodes sequentially (unattended).
+    One failing episode is recorded and the batch continues."""
+    log = on_log or (lambda m: None)
+    results: list[dict] = []
+    for i, ep in enumerate(episodes, 1):
+        log(f"[batch {i}/{len(episodes)}] {ep.slug} ...")
+        try:
+            res = await run_full_pipeline(ep, config, offline=offline, on_log=log)
+            save_episode(ep, config)
+            results.append({"slug": ep.slug, "ok": True,
+                            "episode_dir": res["episode_dir"], "n_clips": res["n_clips"]})
+        except Exception as exc:
+            log(f"[batch {i}] FAILED {ep.slug}: {exc}")
+            results.append({"slug": ep.slug, "ok": False, "error": str(exc)})
+    return results

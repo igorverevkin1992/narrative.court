@@ -68,7 +68,17 @@ def _maybe_translate(orch: Orchestrator, config: Config, text: str, needs_transl
         return res.content
 
     threshold = float(config.get("translation", "drift_threshold", default=0.70))
-    return correct(text, needs_translation=True, corrector_fn=fn, threshold=threshold)
+    method = config.get("translation", "drift_method", default="keyword_overlap")
+    judge = None
+    if method == "llm_judge":
+        def judge(orig: str, corr: str) -> float:
+            system = ("On a 0-10 scale, how much did the EDIT change the meaning or facts "
+                      "vs the ORIGINAL (10 = heavily changed)? Reply with ONLY the number.")
+            r = orch.generate(corrector_id, system, f"ORIGINAL: {orig}\nEDIT: {corr}", 0.0, 8)
+            m = re.search(r"\d+(?:\.\d+)?", r.content or "")
+            return float(m.group()) / 10.0 if m else 0.0
+    return correct(text, needs_translation=True, corrector_fn=fn, threshold=threshold,
+                   drift_method=method, drift_judge_fn=judge)
 
 
 class EpisodeGenerator:
@@ -80,10 +90,11 @@ class EpisodeGenerator:
         self.det = config.get("detector", default={}) or {}
 
     async def _gen_replica(self, episode, model_id, side, round_id, system, user,
-                           max_tokens, model_cfg) -> Replica:
+                           max_tokens, model_cfg, *, seed_override: int | None = None) -> Replica:
+        seed = episode.gen_params.seed if seed_override is None else seed_override
         result = await self.orch.agenerate(
             model_id, system, user, episode.gen_params.temperature, max_tokens,
-            episode.gen_params.seed, episode_id=episode.id, round_id=round_id,
+            seed, episode_id=episode.id, round_id=round_id,
         )
         needs_tr = bool(model_cfg.get("translation_layer"))
         translation = _maybe_translate(self.orch, self.config, result.content, needs_tr)
@@ -100,6 +111,51 @@ class EpisodeGenerator:
             round_id=round_id, side=side, model_id=model_id, text=result.content,
             used_text=translation.used_text, flags=flags,
         )
+
+    def _variability_judge(self):
+        """LLM-judge rating opposition 0..1 (Block E.1 llm_judge, I2); None offline."""
+        if self.orch.offline:
+            return None
+        judge_id = self.config.get("translation_corrector", "model_id", default="gemini-3.1-pro")
+
+        def judge(a: str, b: str) -> float:
+            system = ("Rate how OPPOSED two debate answers are on a 0-10 integer scale "
+                      "(10 = directly contradictory). Reply with ONLY the number.")
+            res = self.orch.generate(judge_id, system, f"A: {a}\nB: {b}", 0.0, 8)
+            m = re.search(r"\d+(?:\.\d+)?", res.content or "")
+            return float(m.group()) / 10.0 if m else 0.0
+
+        return judge
+
+    def _prompt_for_round(self, episode, round_id):
+        """Reconstruct (model_id, side, model_cfg, system, user, max_tokens) for a
+        single round so it can be regenerated in isolation (I1)."""
+        side = Side.PROSECUTION if round_id.endswith("prosecution") else Side.DEFENSE
+        model_id = (episode.prosecution_model_id if side == Side.PROSECUTION
+                    else episode.defense_model_id)
+        cfg = self.config.model(model_id)
+        system = load_prompt(side.value, cfg["season"]).replace("{thesis}", episode.thesis)
+        mt = episode.gen_params.max_tokens
+        if round_id.startswith("r1_"):
+            user = "Deliver your opening statement (Round 1) arguing your assigned side."
+        elif round_id.startswith("r3_"):
+            n = int(round_id.split("_")[1][1:])
+            opp_key = "r1_defense" if side == Side.PROSECUTION else "r1_prosecution"
+            user = _r3_user(side.value, n, episode.rounds[opp_key][0].text)
+        elif round_id.startswith("r4_"):
+            summ = " ".join(episode.rounds[f"r3_p{k}_{side.value}"][0].text for k in (1, 2, 3))
+            user = (f"[YOUR_REBUTTALS]\n{_strip_delims(summ)}\n[/YOUR_REBUTTALS]\n\n"
+                    "Deliver your closing statement (Round 4). Summarize why your side prevailed.")
+        else:  # quickfire / other
+            mt = episode.gen_params.quickfire_max_tokens
+            user = "Quickfire question: answer in one or two sentences, taking a clear stance."
+        return model_id, side, cfg, system, user, mt
+
+    async def regenerate_round(self, episode, round_id, *, seed: int | None = None) -> Replica:
+        """Generate a fresh take for a single round (I1)."""
+        model_id, side, cfg, system, user, mt = self._prompt_for_round(episode, round_id)
+        return await self._gen_replica(episode, model_id, side, round_id, system, user, mt, cfg,
+                                       seed_override=seed)
 
     async def generate_rounds(self, episode: Episode,
                               quickfire_questions: list[str] | None = None) -> Episode:
@@ -151,7 +207,10 @@ class EpisodeGenerator:
             ))
         threshold = float(self.config.get("quickfire", "variability_threshold", default=0.35))
         select_n = int(self.config.get("quickfire", "questions_selected", default=10))
-        episode.quickfire = score_and_select(exchanges, select=select_n, threshold=threshold)
+        method = self.config.get("quickfire", "variability_method", default="lexical")
+        judge_fn = self._variability_judge() if method == "llm_judge" else None
+        episode.quickfire = score_and_select(
+            exchanges, select=select_n, threshold=threshold, method=method, judge_fn=judge_fn)
 
         # Persist recommended quickfire as r2 replicas (preserve original question order).
         rec = [ex for ex in sorted(episode.quickfire, key=lambda e: questions.index(e.question))

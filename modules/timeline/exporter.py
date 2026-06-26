@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from modules.schemas import Episode, TimelineData
-from modules.timeline import edl_generator, fcpxml_generator
+from modules.timeline import edl_generator, fcpxml_generator, otio_generator
 from modules.timeline.timecode_calculator import build_timeline
 
 
@@ -47,6 +47,7 @@ def export_timeline(
     *,
     fps: int = 30,
     sample_rate: int = 44100,
+    emit_otio: bool = False,
 ) -> dict:
     """Generate and write all timeline artifacts (resilient, Block O.4).
 
@@ -75,10 +76,16 @@ def export_timeline(
     fcpxml_path = out / f"{episode.slug}.fcpxml"
     fcpxml_path.write_text(fcpxml, encoding="utf-8")
 
+    otio_path = None
+    if emit_otio:  # optional third format; DaVinci imports .otio natively (I8)
+        otio_path = out / f"{episode.slug}.otio"
+        otio_path.write_text(otio_generator.generate_otio(episode, timeline), encoding="utf-8")
+
     return {
         "fcpxml": str(fcpxml_path),
         "fcpxml_valid": fcpxml_valid,
         "edl": str(edl_path),
         "markers_md": str(markers_path),
+        "otio": str(otio_path) if otio_path else None,
         "timeline": timeline,
     }
