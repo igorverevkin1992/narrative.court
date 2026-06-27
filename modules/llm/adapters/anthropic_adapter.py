@@ -16,14 +16,16 @@ class AnthropicAdapter(ModelAdapter):
         except ImportError as exc:  # pragma: no cover
             raise AdapterError("anthropic SDK not installed") from exc
 
-        client = Anthropic(api_key=self.api_key, timeout=self.timeout)
+        # max_retries=0: the orchestrator's tenacity is the single retry authority
+        # (avoids SDK retries stacking with ours into long hangs).
+        client = Anthropic(api_key=self.api_key, timeout=self.timeout, max_retries=0)
         t0 = time.time()
         try:
             resp = client.messages.create(
                 model=self.model_name,
                 system=system,
                 max_tokens=max_tokens,
-                temperature=temperature,
+                temperature=min(float(temperature), 1.0),  # Anthropic caps temperature at 1.0
                 messages=[{"role": "user", "content": user}],
             )
         except Exception as exc:

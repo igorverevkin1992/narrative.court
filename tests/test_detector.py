@@ -58,3 +58,9 @@ def test_non_deepseek_skips_censor_rules():
     # Short reasoning + long content would be SUPPRESSED for DeepSeek, but not here.
     flags = detect(_res("y" * 300, reasoning="short"), "gpt-5.5", "r1_prosecution", is_deepseek=False)
     assert not any(f.flag_type == "SUPPRESSED" for f in flags)
+
+
+def test_empty_response_any_model_flagged():
+    # A4: a near-empty answer from a non-DeepSeek model is surfaced (not silent).
+    flags = detect(_res(""), "gpt-5.5", "r1_prosecution", is_deepseek=False)
+    assert any(f.rule_triggered == "empty_response" and f.flag_type == "WEAK" for f in flags)

@@ -41,8 +41,14 @@ class GoogleAdapter(ModelAdapter):
             finish = str(resp.candidates[0].finish_reason)
         except Exception:
             pass
+        # resp.text raises (not just AttributeError) when the candidate is
+        # safety-blocked / has no text part -> treat as empty, flagged downstream.
+        try:
+            text = resp.text or ""
+        except Exception:
+            text = ""
         return GenerationResult(
-            content=getattr(resp, "text", "") or "",
+            content=text,
             finish_reason=finish,
             model_id=self.model_id,
             model_version=self.model_name,

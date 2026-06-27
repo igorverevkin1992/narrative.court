@@ -21,7 +21,9 @@ class OpenAIAdapter(ModelAdapter):
         except ImportError as exc:  # pragma: no cover
             raise AdapterError("openai SDK not installed") from exc
 
-        client = OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=self.timeout)
+        # max_retries=0: let the orchestrator's tenacity own retries (no stacking).
+        client = OpenAI(api_key=self.api_key, base_url=self.base_url,
+                        timeout=self.timeout, max_retries=0)
         t0 = time.time()
         try:
             resp = client.chat.completions.create(

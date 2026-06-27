@@ -103,20 +103,76 @@ def test_anthropic_adapter_maps_response(monkeypatch):
         stop_reason = "end_turn"
         model = "claude-sonnet-4-6"
 
+    cap: dict = {}
+
     class _Client:
         def __init__(self, **kw):
-            self.messages = types.SimpleNamespace(create=lambda **kw: _Resp())
+            cap["client"] = kw
+            self.messages = types.SimpleNamespace(
+                create=lambda **kw: (cap.update(create=kw) or _Resp()))
 
     monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=_Client))
     from modules.llm.adapters.anthropic_adapter import AnthropicAdapter
 
     ad = AnthropicAdapter(_cfg("anthropic", id="claude-sonnet-4-6",
                                model_name="claude-sonnet-4-6"), "key", 60)
-    res = ad.generate("system", "user", 0.7, 100)
+    res = ad.generate("system", "user", 1.5, 100)  # 1.5 must be clamped to 1.0 (A3)
     assert res.content == "Hello from Sonnet"
     assert res.finish_reason == "end_turn"
     assert res.model_id == "claude-sonnet-4-6"
     assert res.usage["input_tokens"] == 10 and res.usage["output_tokens"] == 5
+    assert cap["client"]["max_retries"] == 0          # A2: no stacked SDK retries
+    assert cap["create"]["temperature"] == 1.0        # A3: Anthropic temperature cap
+
+
+def test_openai_adapter_disables_sdk_retries(monkeypatch):
+    cap: dict = {}
+
+    class _Resp:
+        choices = [types.SimpleNamespace(
+            message=types.SimpleNamespace(content="ok", reasoning_content=None),
+            finish_reason="stop")]
+        usage = None
+        model = "gpt-5.5"
+
+    class _Client:
+        def __init__(self, **kw):
+            cap["client"] = kw
+            self.chat = types.SimpleNamespace(
+                completions=types.SimpleNamespace(create=lambda **kw: _Resp()))
+
+    monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(OpenAI=_Client))
+    from modules.llm.adapters.openai_adapter import OpenAIAdapter
+
+    ad = OpenAIAdapter(_cfg("openai", model_name="gpt-5.5"), "key", 60)
+    res = ad.generate("s", "u", 0.7, 100)
+    assert res.content == "ok"
+    assert cap["client"]["max_retries"] == 0          # A2
+
+
+def test_google_adapter_handles_blocked_text(monkeypatch):
+    class _Resp:
+        candidates = [types.SimpleNamespace(finish_reason="SAFETY")]
+
+        @property
+        def text(self):
+            raise ValueError("blocked: no text part")  # google-genai raises, not AttributeError
+
+    class _Client:
+        def __init__(self, **kw):
+            self.models = types.SimpleNamespace(generate_content=lambda **kw: _Resp())
+
+    types_mod = types.SimpleNamespace(GenerateContentConfig=lambda **kw: object())
+    genai_mod = types.SimpleNamespace(Client=_Client, types=types_mod)
+    monkeypatch.setitem(sys.modules, "google", types.SimpleNamespace(genai=genai_mod))
+    monkeypatch.setitem(sys.modules, "google.genai", genai_mod)
+    monkeypatch.setitem(sys.modules, "google.genai.types", types_mod)
+    from modules.llm.adapters.google_adapter import GoogleAdapter
+
+    ad = GoogleAdapter(_cfg("google", model_name="gemini-3.1-pro"), "key", 60)
+    res = ad.generate("s", "u", 0.7, 100)
+    assert res.content == ""                            # A1: blocked -> empty, no crash
+    assert "SAFETY" in res.finish_reason
 
 
 def test_google_adapter_maps_response(monkeypatch):

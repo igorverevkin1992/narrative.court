@@ -108,4 +108,13 @@ def detect(
             judge_fn=hedging_judge_fn,
         )
     )
+
+    # A4: a near-empty answer from ANY model is a non-answer (DeepSeek empties are
+    # already REFUSED above); surface it so a blank Gemini/Claude reply isn't silent.
+    content = (result.content or "").strip()
+    if len(content) < 15 and not any(f.flag_type in ("REFUSED", "SUPPRESSED") for f in flags):
+        flags.append(BehaviourFlag(
+            flag_type="WEAK", confidence=0.5,
+            evidence=f"near-empty response ({len(content)} chars)",
+            rule_triggered="empty_response", model_id=model_id, round_id=round_id))
     return flags
