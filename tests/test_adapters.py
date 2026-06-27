@@ -84,3 +84,73 @@ def test_gigachat_403_raises_sanctions(monkeypatch):
     )
     with pytest.raises(SanctionsBlockedError):
         ad.generate("s", "u", 0.7, 100)
+
+
+# --- production-pair adapters: response mapping against fake SDKs ------------
+def test_anthropic_adapter_maps_response(monkeypatch):
+    class _Block:
+        def __init__(self, t):
+            self.type = "text"
+            self.text = t
+
+    class _Usage:
+        input_tokens = 10
+        output_tokens = 5
+
+    class _Resp:
+        content = [_Block("Hello from Sonnet")]
+        usage = _Usage()
+        stop_reason = "end_turn"
+        model = "claude-sonnet-4-6"
+
+    class _Client:
+        def __init__(self, **kw):
+            self.messages = types.SimpleNamespace(create=lambda **kw: _Resp())
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=_Client))
+    from modules.llm.adapters.anthropic_adapter import AnthropicAdapter
+
+    ad = AnthropicAdapter(_cfg("anthropic", id="claude-sonnet-4-6",
+                               model_name="claude-sonnet-4-6"), "key", 60)
+    res = ad.generate("system", "user", 0.7, 100)
+    assert res.content == "Hello from Sonnet"
+    assert res.finish_reason == "end_turn"
+    assert res.model_id == "claude-sonnet-4-6"
+    assert res.usage["input_tokens"] == 10 and res.usage["output_tokens"] == 5
+
+
+def test_google_adapter_maps_response(monkeypatch):
+    class _Resp:
+        text = "Hi from Gemini"
+        candidates = [types.SimpleNamespace(finish_reason="STOP")]
+
+    class _Client:
+        def __init__(self, **kw):
+            self.models = types.SimpleNamespace(generate_content=lambda **kw: _Resp())
+
+    types_mod = types.SimpleNamespace(GenerateContentConfig=lambda **kw: object())
+    genai_mod = types.SimpleNamespace(Client=_Client, types=types_mod)
+    monkeypatch.setitem(sys.modules, "google", types.SimpleNamespace(genai=genai_mod))
+    monkeypatch.setitem(sys.modules, "google.genai", genai_mod)
+    monkeypatch.setitem(sys.modules, "google.genai.types", types_mod)
+    from modules.llm.adapters.google_adapter import GoogleAdapter
+
+    ad = GoogleAdapter(_cfg("google", id="gemini-3.1-pro", model_name="gemini-3.1-pro"), "key", 60)
+    res = ad.generate("system", "user", 0.7, 100)
+    assert res.content == "Hi from Gemini"
+    assert res.model_id == "gemini-3.1-pro"
+    assert "STOP" in res.finish_reason
+
+
+# --- preflight structure (deterministic without keys) -----------------------
+def test_preflight_pair_structure(monkeypatch):
+    from modules import preflight
+    from modules.config import load_config
+
+    monkeypatch.setattr(preflight, "get_secret", lambda name: None)  # no keys in test env
+    results = preflight.preflight_pair(load_config(), "gemini-3.1-pro", "claude-sonnet-4-6")
+    assert len(results) == 4
+    assert all({"target", "ok", "detail"} <= set(r) for r in results)
+    assert results[0]["ok"] is False and "GOOGLE_API_KEY" in results[0]["detail"]
+    assert results[1]["ok"] is False and "ANTHROPIC_API_KEY" in results[1]["detail"]
+    assert results[3]["target"] == "voice presets" and results[3]["ok"] is False

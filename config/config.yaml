@@ -24,6 +24,10 @@ generation_defaults:
   reasoning_timeout_seconds: 180   # used when behaviour_profile.reasoning == true
   max_parallel_requests: 4         # concurrency cap on live LLM calls (Block B.2 RPM/TPM safety)
 
+production:                         # default REAL pair for the production MVP
+  default_prosecution: "gemini-3.1-pro"     # Google Gemini 3.1 Pro (GOOGLE_API_KEY)
+  default_defense: "claude-sonnet-4-6"      # Anthropic Claude Sonnet 4.6 (ANTHROPIC_API_KEY)
+
 tts_defaults:
   output_format: "pcm_44100"       # converted to WAV 44.1 kHz/16-bit on disk; Pro plan required
   el_model_id: "eleven_turbo_v2_5"
@@ -110,6 +114,18 @@ models:
     season: 1
     sanctions_risk: false
     behaviour_profile: { hedging_tendency: "high", reasoning: true, refusal_patterns: [] }
+
+  - id: "claude-sonnet-4-6"                 # production-MVP pair (real, available model)
+    display_name: "Claude Sonnet 4.6"
+    provider: "anthropic"
+    api_format: "anthropic"
+    model_name: "claude-sonnet-4-6"
+    base_url: null
+    api_key_env: "ANTHROPIC_API_KEY"
+    translation_layer: false
+    season: 1
+    sanctions_risk: false
+    behaviour_profile: { hedging_tendency: "high", reasoning: false, refusal_patterns: [] }
 
   - id: "gemini-3.1-pro"
     display_name: "Gemini 3.1 Pro"

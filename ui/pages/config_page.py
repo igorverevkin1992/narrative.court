@@ -2,7 +2,7 @@
 TTS presets, paths. Keys are stored in the OS keyring (never in the repo)."""
 from __future__ import annotations
 
-from nicegui import ui
+from nicegui import run, ui
 
 from modules.config import get_secret, mask, set_secret
 from modules.generator.episode_generator import PROMPTS_DIR, load_prompt
@@ -12,6 +12,30 @@ from ui.state import AppState
 def render(state: AppState) -> None:
     cfg = state.config
     ui.label("Config").classes("text-2xl font-bold")
+
+    # --- Live preflight for the production pair ------------------------------
+    with ui.card().classes("w-full"):
+        ui.label("Live preflight (production-пара)").classes("font-bold")
+        pp = cfg.get("production", "default_prosecution", default="gpt-5.5")
+        pd = cfg.get("production", "default_defense", default="deepseek-v4-pro")
+        ui.label(f"Пара: {pp} vs {pd}").classes("text-xs text-grey")
+        pf_result = ui.column().classes("w-full")
+
+        async def _preflight():
+            from modules.preflight import preflight_pair
+            pf_result.clear()
+            with pf_result:
+                ui.label("Проверка... (реальные вызовы)").classes("text-xs text-grey")
+            results = await run.io_bound(preflight_pair, cfg, pp, pd)
+            pf_result.clear()
+            with pf_result:
+                for r in results:
+                    color = "text-green-700" if r["ok"] else "text-red"
+                    mark = "✓" if r["ok"] else "✗"
+                    ui.label(f"{mark} {r['target']}: {r['detail']}").classes(f"text-sm {color}")
+        ui.button("Запустить preflight", on_click=_preflight).props("color=primary")
+        ui.label("Проверяет ключи, имена моделей и голос-пресеты до сборки эпизода.")\
+            .classes("text-xs text-grey")
 
     # --- Models + masked keys (refreshable so key edits show immediately) ----
     with ui.card().classes("w-full"):

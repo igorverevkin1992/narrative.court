@@ -45,7 +45,7 @@ data/episodes/<slug>/
 python -m pytest tests/ -q
 ```
 
-Покрытие (78 тестов): Behaviour Detector (`test_detector.py`), Timeline Exporter
+Покрытие (82 теста): Behaviour Detector (`test_detector.py`), Timeline Exporter
 (`test_exporter.py`), вариативность/дрейф/лидерборд/чек-лист/метаданные
 (`test_core.py`), end-to-end offline-конвейер (`test_pipeline.py`), пошаговая
 оркестрация + авто-сейв + objection/quickfire-resync (`test_studio_steps.py`),
@@ -55,7 +55,17 @@ slug-traversal/FCPXML-escape/markers-sanitize/atomic-save (`test_security.py`),
 O.1–O.7 (`test_edge_cases.py`), полный 10-шаговый поток (`test_integration.py`),
 TTS-resume-длительность/валидаторы/delimiter/secret-cache (`test_audit2.py`),
 экономика/OTIO/publish-pack (`test_improvements.py`), мульти-вариант/методы/
-ассист/батч (`test_improvements2.py`).
+ассист/батч (`test_improvements2.py`), production-адаптеры (Gemini/Claude
+mapping) + preflight (`test_adapters.py`).
+
+## Production MVP
+
+Реальная пара по умолчанию — **Gemini 3.1 Pro vs Claude Sonnet 4.6**
+(`config.yaml → production`). Перед первым живым эпизодом: задать ключи
+(`GOOGLE_API_KEY`/`ANTHROPIC_API_KEY`/`ELEVENLABS_API_KEY`), вписать реальные
+`el_voice_id`, прогнать **Config → «Запустить preflight»** (4 зелёных), затем
+снять Offline в Studio. Полная пошаговая инструкция + чек-лист импорта в DaVinci:
+[`RUNBOOK.md`](RUNBOOK.md).
 
 ## Функциональные улучшения
 

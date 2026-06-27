@@ -314,8 +314,10 @@ def render(state: AppState) -> None:
                               value="The dissolution of the USSR was inevitable.").classes("w-full")
             slug = ui.input("Slug (имя папки, [a-z0-9_])", value="ep001_dissolution_ussr").classes("w-full")
             with ui.row().classes("w-full"):
-                pros = ui.select(model_opts, label="Prosecution", value="gpt-5.5").classes("w-64")
-                deff = ui.select(model_opts, label="Defense", value="deepseek-v4-pro").classes("w-64")
+                _pp = cfg.get("production", "default_prosecution", default="gpt-5.5")
+                _pd = cfg.get("production", "default_defense", default="deepseek-v4-pro")
+                pros = ui.select(model_opts, label="Prosecution", value=_pp).classes("w-64")
+                deff = ui.select(model_opts, label="Defense", value=_pd).classes("w-64")
             sanctions_note = ui.markdown("").classes("text-red")
 
             def _check_sanctions(*_):
