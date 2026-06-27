@@ -244,6 +244,14 @@ def step_tts(
     audio_dir = d / "audio"
     sample_rate = int(config.get("timeline", "audio_sample_rate", default=44100))
     el_key = None if offline else get_secret("ELEVENLABS_API_KEY")
+    # Live mode without a key would otherwise silently degrade to silent placeholder
+    # WAVs (the engine treats a missing key as offline). Fail loudly so an operator
+    # who asked for real audio never ships a silent episode by accident.
+    if not offline and not el_key:
+        raise ValueError(
+            "Live TTS requested but ELEVENLABS_API_KEY is not set. "
+            "Add the key (Config screen / .env) or run this step in offline mode."
+        )
     engine = TTSEngine(
         _presets(config), el_key, offline=offline,
         output_format=config.tts_defaults.get("output_format", "pcm_44100"),
@@ -259,7 +267,10 @@ def step_tts(
         out = audio_dir / f"{rid}.wav"
         jobs.append(TTSJob(rid, rep.model_id, rep.used_text or rep.text, str(out)))
 
-    durations = engine.run_batch(jobs, d / "tts_progress.json", on_progress=on_progress)
+    max_parallel = int(config.tts_defaults.get("batch_max_parallel", 1) or 1)
+    durations = engine.run_batch(
+        jobs, d / "tts_progress.json", on_progress=on_progress, max_parallel=max_parallel,
+    )
     for rid, replicas in episode.rounds.items():
         for rep in replicas:
             rep.duration_sec = durations.get(rid)

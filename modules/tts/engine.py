@@ -7,7 +7,9 @@ silent placeholder WAV of the estimated duration so the timeline still builds.
 from __future__ import annotations
 
 import json
+import threading
 import wave
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -123,38 +125,75 @@ class TTSEngine:
         jobs: list[TTSJob],
         checkpoint_path: str | Path,
         on_progress: Callable[[int, int, str], None] | None = None,
+        *,
+        max_parallel: int = 1,
     ) -> dict[str, float]:
-        """Run all jobs; skip ones already 'done'. Returns clip_id -> duration."""
+        """Run all jobs; skip ones already 'done'. Returns clip_id -> duration.
+
+        Up to ``max_parallel`` clips are synthesized concurrently (ElevenLabs
+        convert is I/O-bound, so this is the throughput win that ``batch_max_parallel``
+        was always meant to deliver). The checkpoint file, the durations map and the
+        progress counter are guarded by a lock so the resumable state stays
+        consistent. On the first failure the not-yet-started jobs are cancelled and
+        the error is re-raised, preserving the previous fail-fast behaviour.
+        """
         checkpoint_path = Path(checkpoint_path)
         state = self._load_checkpoint(checkpoint_path)
         durations: dict[str, float] = {}
         total = len(jobs)
+        lock = threading.Lock()
+        progress = {"n": 0}
 
-        for i, job in enumerate(jobs, 1):
-            entry = state.get(job.clip_id)
-            if entry == "done" and Path(job.out_path).exists():
-                # Resume path: measure the existing WAV so timecodes match the real
-                # audio (F1) -- estimate_duration is only a last-resort fallback.
+        def _report(msg: str) -> None:
+            # Caller holds ``lock`` (or we are in the single-threaded resume loop).
+            progress["n"] += 1
+            if on_progress:
+                on_progress(progress["n"], total, msg)
+
+        # Resume path: jobs already 'done' with their WAV on disk need no synthesis.
+        # Measure the existing WAV so timecodes match the real audio (F1);
+        # estimate_duration is only a last-resort fallback.
+        pending: list[TTSJob] = []
+        for job in jobs:
+            if state.get(job.clip_id) == "done" and Path(job.out_path).exists():
                 try:
                     from modules.timeline.timecode_calculator import audio_duration_sec
 
                     durations[job.clip_id] = audio_duration_sec(job.out_path)
                 except Exception:
                     durations[job.clip_id] = estimate_duration(job.text)
-                if on_progress:
-                    on_progress(i, total, f"skip {job.clip_id} (done)")
-                continue
-            try:
-                dur = self.generate_one(job)
-                durations[job.clip_id] = dur
-                state[job.clip_id] = "done"
-            except Exception as exc:
-                state[job.clip_id] = "failed"
-                self._save_checkpoint(checkpoint_path, state)
-                if on_progress:
-                    on_progress(i, total, f"FAILED {job.clip_id}: {exc}")
-                raise
-            self._save_checkpoint(checkpoint_path, state)
-            if on_progress:
-                on_progress(i, total, f"done {job.clip_id}")
+                _report(f"skip {job.clip_id} (done)")
+            else:
+                pending.append(job)
+
+        if not pending:
+            return durations
+
+        def _work(job: TTSJob) -> tuple[str, float]:
+            return job.clip_id, self.generate_one(job)
+
+        workers = max(1, int(max_parallel))
+        first_exc: Exception | None = None
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futures = {ex.submit(_work, job): job for job in pending}
+            for fut in as_completed(futures):
+                job = futures[fut]
+                try:
+                    clip_id, dur = fut.result()
+                except Exception as exc:
+                    with lock:
+                        state[job.clip_id] = "failed"
+                        self._save_checkpoint(checkpoint_path, state)
+                        _report(f"FAILED {job.clip_id}: {exc}")
+                    first_exc = exc
+                    # Cancel jobs that have not started; in-flight ones finish below.
+                    ex.shutdown(wait=False, cancel_futures=True)
+                    break
+                with lock:
+                    durations[clip_id] = dur
+                    state[clip_id] = "done"
+                    self._save_checkpoint(checkpoint_path, state)
+                    _report(f"done {clip_id}")
+        if first_exc is not None:
+            raise first_exc
         return durations
