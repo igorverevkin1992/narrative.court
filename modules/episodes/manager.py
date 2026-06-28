@@ -132,10 +132,40 @@ def reset_tts_checkpoint(episode: Episode, config: Config) -> bool:
 # Generator / orchestrator construction
 # --------------------------------------------------------------------------- #
 def make_generator(
-    episode: Episode, config: Config, *, offline: bool, on_log: LogFn | None = None
+    episode: Episode, config: Config, *, offline: bool, on_log: LogFn | None = None,
+    on_checkpoint: Callable[[Episode], None] | None = None,
 ) -> EpisodeGenerator:
     orch = Orchestrator(config, offline=offline)
-    return EpisodeGenerator(config, orch, on_log=on_log or (lambda m: None))
+    return EpisodeGenerator(config, orch, on_log=on_log or (lambda m: None),
+                            on_checkpoint=on_checkpoint)
+
+
+# --------------------------------------------------------------------------- #
+# Generation checkpoint inspection (G1; mirrors the TTS checkpoint summary)
+# --------------------------------------------------------------------------- #
+_CORE_ROUND_IDS = (
+    ["r1_prosecution", "r1_defense"]
+    + [f"r3_p{n}_{side}" for n in (1, 2, 3) for side in ("prosecution", "defense")]
+    + ["r4_prosecution", "r4_defense"]
+)
+
+
+def generation_progress(episode: Episode) -> dict:
+    """{done, expected, remaining, quickfire, complete} for resumable generation.
+
+    Counts the 8 core rounds (R1 x2, R3 x6, R4 x2); the quickfire set is tracked
+    separately. ``complete`` means every core round is present AND quickfire was
+    scored, i.e. a re-run of step_generate would be a no-op (G1)."""
+    done = sum(1 for rid in _CORE_ROUND_IDS
+               if episode.rounds.get(rid) and episode.rounds[rid][0].text)
+    expected = len(_CORE_ROUND_IDS)
+    return {
+        "done": done,
+        "expected": expected,
+        "remaining": expected - done,
+        "quickfire": bool(episode.quickfire),
+        "complete": done == expected and bool(episode.quickfire),
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -188,9 +218,14 @@ async def step_smoke_test(
 async def step_generate(
     episode: Episode, config: Config, *, offline: bool = True, on_log: LogFn | None = None
 ) -> Episode:
-    """Studio step 4: generate all rounds + quickfire (asyncio-parallel)."""
+    """Studio step 4: generate all rounds + quickfire (asyncio-parallel).
+
+    Resumable (G1): each phase is autosaved to episode.json, so a failure
+    part-way leaves the finished rounds on disk and a re-run fills only the gaps.
+    """
     log = on_log or (lambda m: None)
-    gen = make_generator(episode, config, offline=offline, on_log=log)
+    gen = make_generator(episode, config, offline=offline, on_log=log,
+                         on_checkpoint=lambda e: save_episode(e, config))
     log("Generating rounds...")
     await gen.generate_rounds(episode)
     episode.status = EpisodeStatus.GENERATED

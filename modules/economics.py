@@ -57,6 +57,18 @@ def estimate_episode_cost(episode: Episode, config: Config) -> dict:
     }
 
 
+def within_budget(episode: Episode, config: Config) -> tuple[bool, float, float | None]:
+    """G2: pre-flight the estimated episode cost against an optional spend cap.
+
+    Returns ``(ok, est_total_usd, cap_usd)``. ``pricing.max_episode_usd = null``
+    (or absent) means no limit -> always ok. The UI uses this to block or confirm
+    a live run before any paid API call is made."""
+    cap_raw = (config.get("pricing", default={}) or {}).get("max_episode_usd")
+    est = float(estimate_episode_cost(episode, config)["total_usd"])
+    cap = None if cap_raw is None else float(cap_raw)
+    return (cap is None or est <= cap), est, cap
+
+
 def tts_cost(episode: Episode, config: Config) -> float:
     """Actual TTS cost from the characters that were (or will be) spoken."""
     chars = sum(len(rep.used_text or rep.text)

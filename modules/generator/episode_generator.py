@@ -83,11 +83,43 @@ def _maybe_translate(orch: Orchestrator, config: Config, text: str, needs_transl
 
 class EpisodeGenerator:
     def __init__(self, config: Config, orchestrator: Orchestrator,
-                 on_log: Callable[[str], None] | None = None):
+                 on_log: Callable[[str], None] | None = None,
+                 on_checkpoint: Callable[["Episode"], None] | None = None):
         self.config = config
         self.orch = orchestrator
         self.on_log = on_log or (lambda msg: None)
+        # G1: called after each generation phase so completed rounds are persisted
+        # and a mid-episode failure never discards (or re-bills) finished work.
+        self.on_checkpoint = on_checkpoint or (lambda ep: None)
         self.det = config.get("detector", default={}) or {}
+
+    def _checkpoint(self, episode: Episode) -> None:
+        try:
+            self.on_checkpoint(episode)
+        except Exception as exc:  # a failed autosave must not abort generation
+            self.on_log(f"[checkpoint] save failed: {exc}")
+
+    async def _run_phase(self, episode: Episode, named_tasks: list) -> None:
+        """Await a batch of replica coroutines, store every success into
+        episode.rounds, checkpoint, then raise the first exception (if any).
+
+        Using return_exceptions=True means the completed half of a partially
+        failed batch survives to the checkpoint, so a resume re-runs only the
+        gaps (G1). ``named_tasks`` is a list of (round_id, coroutine)."""
+        if not named_tasks:
+            return
+        results = await asyncio.gather(*(t for _, t in named_tasks), return_exceptions=True)
+        first_exc: Exception | None = None
+        for (rid, _), res in zip(named_tasks, results):
+            if isinstance(res, Exception):
+                if first_exc is None:
+                    first_exc = res
+                self.on_log(f"[{rid}] FAILED: {res}")
+                continue
+            episode.rounds[res.round_id] = [res]
+        self._checkpoint(episode)
+        if first_exc is not None:
+            raise first_exc
 
     async def _gen_replica(self, episode, model_id, side, round_id, system, user,
                            max_tokens, model_cfg, *, seed_override: int | None = None) -> Replica:
@@ -173,8 +205,20 @@ class EpisodeGenerator:
         return await self._gen_replica(episode, model_id, side, round_id, system, user, mt, cfg,
                                        seed_override=seed)
 
+    def _have(self, episode: Episode, round_id: str) -> bool:
+        """True if a round already has a non-empty reply (resume skip, G1)."""
+        reps = episode.rounds.get(round_id)
+        return bool(reps and reps[0].text)
+
     async def generate_rounds(self, episode: Episode,
                               quickfire_questions: list[str] | None = None) -> Episode:
+        """Generate every round, resuming from whatever is already on the episode.
+
+        Idempotent (G1): any round already present is skipped, and each phase is
+        checkpointed via ``on_checkpoint`` so an interruption mid-episode keeps
+        the finished rounds (and the money spent on them). Re-running fills only
+        the gaps.
+        """
         pros_cfg = self.config.model(episode.prosecution_model_id)
         def_cfg = self.config.model(episode.defense_model_id)
         if pros_cfg is None or def_cfg is None:
@@ -187,72 +231,80 @@ class EpisodeGenerator:
 
         # --- Round 1 (prosecution || defense) ---
         r1_user = "Deliver your opening statement (Round 1) arguing your assigned side."
-        r1p, r1d = await asyncio.gather(
-            self._gen_replica(episode, episode.prosecution_model_id, Side.PROSECUTION,
-                              "r1_prosecution", pros_sys, r1_user, mt, pros_cfg),
-            self._gen_replica(episode, episode.defense_model_id, Side.DEFENSE,
-                              "r1_defense", def_sys, r1_user, mt, def_cfg),
-        )
-        episode.rounds["r1_prosecution"] = [r1p]
-        episode.rounds["r1_defense"] = [r1d]
-
-        # --- Quickfire (all questions, both sides, fully parallel) ---
-        questions = quickfire_questions or DEFAULT_QUICKFIRE
-        tasks = []
-        for q in questions:
-            qu = f"Quickfire question: {q}\nAnswer in one or two sentences, taking a clear stance."
-            tasks.append(self._gen_replica(episode, episode.prosecution_model_id, Side.PROSECUTION,
-                                           "qf_pros", pros_sys, qu, qmt, pros_cfg))
-            tasks.append(self._gen_replica(episode, episode.defense_model_id, Side.DEFENSE,
-                                           "qf_def", def_sys, qu, qmt, def_cfg))
-        qf_results = await asyncio.gather(*tasks)
-
-        exchanges = []
-        for i, q in enumerate(questions):
-            p = qf_results[i * 2]
-            d = qf_results[i * 2 + 1]
-            p_text = p.used_text or p.text
-            d_text = d.used_text or d.text
-            # Flag answers that exceeded the ~15 s word budget before trimming.
-            over = len(p_text.split()) > WORD_BUDGET or len(d_text.split()) > WORD_BUDGET
-            exchanges.append(QuickfireExchange(
-                question=q,
-                prosecution_answer=trim_to_words(p_text),
-                defense_answer=trim_to_words(d_text),
-                over_limit=over,
-            ))
-        threshold = float(self.config.get("quickfire", "variability_threshold", default=0.35))
-        select_n = int(self.config.get("quickfire", "questions_selected", default=10))
-        method = self.config.get("quickfire", "variability_method", default="lexical")
-        judge_fn = self._variability_judge() if method == "llm_judge" else None
-        episode.quickfire = score_and_select(
-            exchanges, select=select_n, threshold=threshold, method=method, judge_fn=judge_fn)
-
-        # Persist recommended quickfire as r2 replicas (preserve original question order).
-        rec = [ex for ex in sorted(episode.quickfire, key=lambda e: questions.index(e.question))
-               if ex.recommended]
-        for i, ex in enumerate(rec, 1):
-            episode.rounds[f"r2_q{i:02d}_prosecution"] = [Replica(
-                round_id=f"r2_q{i:02d}_prosecution", side=Side.PROSECUTION,
-                model_id=episode.prosecution_model_id, text=ex.prosecution_answer,
-                used_text=ex.prosecution_answer)]
-            episode.rounds[f"r2_q{i:02d}_defense"] = [Replica(
-                round_id=f"r2_q{i:02d}_defense", side=Side.DEFENSE,
-                model_id=episode.defense_model_id, text=ex.defense_answer,
-                used_text=ex.defense_answer)]
-
-        # --- Round 3 (3 sub-rounds, inject Round 1 opponent text) ---
-        r3_tasks = []
-        for n in (1, 2, 3):
-            r3_tasks.append(self._gen_replica(
+        r1_tasks = []
+        if not self._have(episode, "r1_prosecution"):
+            r1_tasks.append(("r1_prosecution", self._gen_replica(
                 episode, episode.prosecution_model_id, Side.PROSECUTION,
-                f"r3_p{n}_prosecution", pros_sys, _r3_user("prosecution", n, r1d.text), mt, pros_cfg))
-            r3_tasks.append(self._gen_replica(
+                "r1_prosecution", pros_sys, r1_user, mt, pros_cfg)))
+        if not self._have(episode, "r1_defense"):
+            r1_tasks.append(("r1_defense", self._gen_replica(
                 episode, episode.defense_model_id, Side.DEFENSE,
-                f"r3_p{n}_defense", def_sys, _r3_user("defense", n, r1p.text), mt, def_cfg))
-        r3_results = await asyncio.gather(*r3_tasks)
-        for rep in r3_results:
-            episode.rounds[rep.round_id] = [rep]
+                "r1_defense", def_sys, r1_user, mt, def_cfg)))
+        await self._run_phase(episode, r1_tasks)
+        r1p_text = episode.rounds["r1_prosecution"][0].text
+        r1d_text = episode.rounds["r1_defense"][0].text
+
+        # --- Quickfire (atomic phase: skipped wholesale once scored on resume) ---
+        if not episode.quickfire:
+            questions = quickfire_questions or DEFAULT_QUICKFIRE
+            tasks = []
+            for q in questions:
+                qu = f"Quickfire question: {q}\nAnswer in one or two sentences, taking a clear stance."
+                tasks.append(self._gen_replica(episode, episode.prosecution_model_id,
+                                               Side.PROSECUTION, "qf_pros", pros_sys, qu, qmt, pros_cfg))
+                tasks.append(self._gen_replica(episode, episode.defense_model_id,
+                                               Side.DEFENSE, "qf_def", def_sys, qu, qmt, def_cfg))
+            qf_results = await asyncio.gather(*tasks)
+
+            exchanges = []
+            for i, q in enumerate(questions):
+                p = qf_results[i * 2]
+                d = qf_results[i * 2 + 1]
+                p_text = p.used_text or p.text
+                d_text = d.used_text or d.text
+                # Flag answers that exceeded the ~15 s word budget before trimming.
+                over = len(p_text.split()) > WORD_BUDGET or len(d_text.split()) > WORD_BUDGET
+                exchanges.append(QuickfireExchange(
+                    question=q,
+                    prosecution_answer=trim_to_words(p_text),
+                    defense_answer=trim_to_words(d_text),
+                    over_limit=over,
+                ))
+            threshold = float(self.config.get("quickfire", "variability_threshold", default=0.35))
+            select_n = int(self.config.get("quickfire", "questions_selected", default=10))
+            method = self.config.get("quickfire", "variability_method", default="lexical")
+            judge_fn = self._variability_judge() if method == "llm_judge" else None
+            episode.quickfire = score_and_select(
+                exchanges, select=select_n, threshold=threshold, method=method, judge_fn=judge_fn)
+
+            # Persist recommended quickfire as r2 replicas (preserve question order).
+            rec = [ex for ex in sorted(episode.quickfire, key=lambda e: questions.index(e.question))
+                   if ex.recommended]
+            for i, ex in enumerate(rec, 1):
+                episode.rounds[f"r2_q{i:02d}_prosecution"] = [Replica(
+                    round_id=f"r2_q{i:02d}_prosecution", side=Side.PROSECUTION,
+                    model_id=episode.prosecution_model_id, text=ex.prosecution_answer,
+                    used_text=ex.prosecution_answer)]
+                episode.rounds[f"r2_q{i:02d}_defense"] = [Replica(
+                    round_id=f"r2_q{i:02d}_defense", side=Side.DEFENSE,
+                    model_id=episode.defense_model_id, text=ex.defense_answer,
+                    used_text=ex.defense_answer)]
+            self._checkpoint(episode)
+
+        # --- Round 3 (3 sub-rounds; checkpoint after each so a failure loses <= 1 pair) ---
+        for n in (1, 2, 3):
+            r3_tasks = []
+            if not self._have(episode, f"r3_p{n}_prosecution"):
+                r3_tasks.append((f"r3_p{n}_prosecution", self._gen_replica(
+                    episode, episode.prosecution_model_id, Side.PROSECUTION,
+                    f"r3_p{n}_prosecution", pros_sys, _r3_user("prosecution", n, r1d_text),
+                    mt, pros_cfg)))
+            if not self._have(episode, f"r3_p{n}_defense"):
+                r3_tasks.append((f"r3_p{n}_defense", self._gen_replica(
+                    episode, episode.defense_model_id, Side.DEFENSE,
+                    f"r3_p{n}_defense", def_sys, _r3_user("defense", n, r1p_text),
+                    mt, def_cfg)))
+            await self._run_phase(episode, r3_tasks)
 
         # --- Round 4 (closing, depends on Round 3) ---
         r3_summary_pros = _strip_delims(" ".join(
@@ -263,15 +315,17 @@ class EpisodeGenerator:
                         "Deliver your closing statement (Round 4). Summarize why your side prevailed.")
         r4_user_def = (f"[YOUR_REBUTTALS]\n{r3_summary_def}\n[/YOUR_REBUTTALS]\n\n"
                        "Deliver your closing statement (Round 4). Summarize why your side prevailed.")
-        r4p, r4d = await asyncio.gather(
-            self._gen_replica(episode, episode.prosecution_model_id, Side.PROSECUTION,
-                              "r4_prosecution", pros_sys, r4_user_pros, mt, pros_cfg),
-            self._gen_replica(episode, episode.defense_model_id, Side.DEFENSE,
-                              "r4_defense", def_sys, r4_user_def, mt, def_cfg),
-        )
-        episode.rounds["r4_prosecution"] = [r4p]
-        episode.rounds["r4_defense"] = [r4d]
+        r4_tasks = []
+        if not self._have(episode, "r4_prosecution"):
+            r4_tasks.append(("r4_prosecution", self._gen_replica(
+                episode, episode.prosecution_model_id, Side.PROSECUTION,
+                "r4_prosecution", pros_sys, r4_user_pros, mt, pros_cfg)))
+        if not self._have(episode, "r4_defense"):
+            r4_tasks.append(("r4_defense", self._gen_replica(
+                episode, episode.defense_model_id, Side.DEFENSE,
+                "r4_defense", def_sys, r4_user_def, mt, def_cfg)))
+        await self._run_phase(episode, r4_tasks)
 
-        # Aggregate all flags onto the episode.
+        # Aggregate all flags onto the episode (recomputed each call -> idempotent).
         episode.behaviour_flags = [f for reps in episode.rounds.values() for r in reps for f in r.flags]
         return episode

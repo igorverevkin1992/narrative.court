@@ -21,11 +21,13 @@ from nicegui import run, ui
 from modules.config import Config
 from modules.episodes import objections
 from modules.episodes.diagnostics import refused_or_suppressed_rounds
-from modules.economics import episode_cost_from_logs, estimate_episode_cost
+from modules.economics import episode_cost_from_logs, estimate_episode_cost, within_budget
+from modules.preview import build_preview
 from modules.episodes.manager import (
     episode_dir,
     export_bundle,
     generate_variants,
+    generation_progress,
     list_saved_episodes,
     load_episode,
     n_clips,
@@ -73,6 +75,29 @@ def _report_exc(exc: Exception, log, prefix: str) -> None:
     else:
         log.push(f"ОШИБКА: {exc}")
         ui.notify(f"{prefix}: {exc}", type="negative")
+
+
+async def _spend_gate(episode, config, *, offline: bool) -> bool:
+    """G2: before a live run, block over-cap episodes and confirm the spend.
+
+    Offline runs cost nothing -> always allowed. Returns True to proceed."""
+    if offline:
+        return True
+    ok, est, cap = within_budget(episode, config)
+    if not ok:
+        ui.notify(
+            f"Прогон заблокирован: оценка ≈${est:.2f} превышает лимит ${cap:.2f} "
+            "(pricing.max_episode_usd). Поднимите лимит или включите Offline.",
+            type="negative", timeout=10000)
+        return False
+    with ui.dialog() as dlg, ui.card():
+        ui.label(f"Живой прогон: ≈ ${est:.2f} будет потрачено на API."
+                 + (f" Лимит ${cap:.2f}." if cap is not None else "")).classes("text-sm")
+        ui.label("Продолжить?").classes("font-bold")
+        with ui.row().classes("justify-end w-full"):
+            ui.button("Отмена", on_click=lambda: dlg.submit(False)).props("flat")
+            ui.button("Продолжить", on_click=lambda: dlg.submit(True)).props("color=primary")
+    return bool(await dlg)
 
 
 def render(state: AppState) -> None:
@@ -283,11 +308,28 @@ def render(state: AppState) -> None:
                     ui.button("Copy", on_click=lambda v=value: _copy(str(v))).props("flat dense color=primary")
                 ui.label(str(value)).classes("text-sm whitespace-pre-wrap")
 
+    @ui.refreshable
+    def gen_status_panel() -> None:
+        """G1: resume banner -- shows how much of an interrupted generation is done."""
+        e = ep()
+        if e is None or not e.rounds:
+            return
+        prog = generation_progress(e)
+        if prog["complete"]:
+            ui.label(f"Генерация завершена ✓ (ядро {prog['done']}/{prog['expected']} + квикфайр)")\
+                .classes("text-sm text-green-700")
+        else:
+            qf = "есть" if prog["quickfire"] else "нет"
+            ui.label(f"⏸ Генерация неполная: ядро {prog['done']}/{prog['expected']}, "
+                     f"квикфайр: {qf}. «Продолжить» догенерирует только недостающее.")\
+                .classes("text-sm text-amber-700")
+
     def _refresh_all():
         review_panel.refresh()
         objection_panel.refresh()
         quickfire_panel.refresh()
         metadata_panel.refresh()
+        gen_status_panel.refresh()
 
     # --------------------------------------------------------------- stepper
     with ui.stepper().props("vertical flat").classes("w-full q-mt-md") as stepper:
@@ -431,21 +473,26 @@ def render(state: AppState) -> None:
 
         # ---- Step 4: full generation ----
         with ui.step("4. Полная генерация"):
+            gen_status_panel()  # G1 resume banner (partial-generation progress)
             gen_log = ui.log(max_lines=400).classes("w-full h-56 bg-black text-green-400 text-xs")
             gen_done = ui.label("").classes("text-sm")
-            gen_btn = ui.button("Сгенерировать все раунды").props("color=primary")
+            gen_btn = ui.button("Сгенерировать / продолжить").props("color=primary")
 
             async def _run_gen():
                 if ep() is None:
                     return
+                if not await _spend_gate(ep(), cfg, offline=offline.value):  # G2
+                    return
                 gen_btn.disable()
                 gen_log.clear()
                 gen_done.text = ""
-                gen_log.push("Генерация раундов (R1 ∥ Quickfire → R3 → R4)...")
+                gen_log.push("Генерация раундов (R1 ∥ Quickfire → R3 → R4, резюмируемая)...")
                 try:
                     await step_generate(ep(), cfg, offline=offline.value, on_log=lambda m: gen_log.push(m))
                 except Exception as exc:
                     _report_exc(exc, gen_log, "Ошибка генерации")
+                    autosave()          # G1: persist whatever completed before the failure
+                    _refresh_all()      # update the resume banner
                     gen_btn.enable()
                     return
                 ctx.pop("claims", None)
@@ -643,6 +690,24 @@ def render(state: AppState) -> None:
                         ui.notify(f"Publish-pack собран: {path}", type="positive")
                         ui.download(path)
                     ui.button("📦 Publish pack (zip для монтажёра)", on_click=_bundle)\
+                        .props("flat color=primary")
+
+                    async def _build_preview():  # G3
+                        try:
+                            res = await run.io_bound(build_preview, e, cfg)
+                        except Exception as exc:
+                            ui.notify(f"Предпрослушка недоступна: {exc}", type="warning")
+                            return
+                        with exp_result:
+                            ui.label(f"🎧 Предпрослушка эпизода (~{res['duration_sec']:.0f} с, "
+                                     f"{res['clips']} клип.) — эфирный порядок:")\
+                                .classes("text-sm font-bold q-mt-sm")
+                            ui.audio(f"/media/{e.slug}/audio/preview.wav").classes("w-full")
+                            if res["missing"]:
+                                ui.label("Пропущены (нет аудио): "
+                                         + ", ".join(res["missing"][:6])).classes("text-xs text-amber-700")
+                        ui.notify("Предпрослушка собрана", type="positive")
+                    ui.button("🎧 Собрать предпрослушку эпизода", on_click=_build_preview)\
                         .props("flat color=primary")
                 ui.notify("Таймлайн экспортирован" if valid else
                           "Экспорт готов, но FCPXML невалиден — используйте EDL (O.4)",
