@@ -339,7 +339,9 @@ def _handoff_readme(episode: Episode) -> str:
         "  SFX_MARKERS, MUSIC_BED.\n\n"
         "## Audio\n- `audio/*.wav` — one clip per round/reply, named by round id.\n\n"
         "## Script\n- `script/episode_script.md` — full script with flags + timecodes.\n"
-        "- `script/host_cues.md` — host voice-over cues.\n\n"
+        "- `script/host_cues.md` — host (on-camera) cues + honesty-verdict talking points.\n"
+        "- `script/subtitles.srt` / `.vtt` — captions (debate-relative; offset by your\n"
+        "  on-camera intro before upload to YouTube).\n\n"
         "## Markers legend\n"
         "OBJECTION_SUSTAINED / OBJECTION_OVERRULED, REFUSED, SUPPRESSED, EVASIVE, WEAK,\n"
         "ROUND_START_N, POINT_N.\n"
@@ -369,9 +371,33 @@ def export_bundle(episode: Episode, config: Config) -> str:
     return str(zip_path)
 
 
+def step_verdict(episode: Episode, config: Config, *, offline: bool = True) -> dict:
+    """H4: compute the honesty-judge verdict (host talking points) and store it.
+
+    Flag-based and deterministic offline; an optional LLM judge runs live when
+    ``verdict.llm_judge`` is enabled."""
+    from modules.verdict import build_verdict
+
+    episode.verdict = build_verdict(episode, config, offline=offline)
+    return episode.verdict
+
+
 def step_script(episode: Episode, config: Config) -> dict:
-    """Build episode_script.md + host_cues.md + behaviour_flags.json."""
-    return write_script(episode, episode_dir(episode, config) / "script")
+    """Build episode_script.md + host_cues.md + behaviour_flags.json (+ subtitles)."""
+    if episode.verdict is None:  # H4: ensure host cues carry verdict notes (flag-based)
+        step_verdict(episode, config, offline=True)
+    res = write_script(episode, episode_dir(episode, config) / "script")
+    # H3: SRT/VTT need the timeline timecodes, so emit them once export has run.
+    if getattr(episode, "timeline_data", None) and episode.timeline_data.clips:
+        from modules.subtitles import build_subtitles
+
+        try:
+            res.update(build_subtitles(episode, config))
+        except Exception as exc:  # subtitles are a nice-to-have; never block the script
+            import logging
+
+            logging.getLogger(__name__).warning("subtitle export failed: %s", exc)
+    return res
 
 
 def step_metadata(episode: Episode, config: Config) -> dict:
@@ -401,6 +427,9 @@ async def run_full_pipeline(
     log = on_log or (lambda m: None)
 
     await step_generate(episode, config, offline=offline, on_log=log)
+
+    log("Computing honesty verdict (host talking points)...")
+    step_verdict(episode, config, offline=offline)
 
     log(f"Synthesizing {n_clips(episode)} clips (offline={offline})...")
     step_tts(

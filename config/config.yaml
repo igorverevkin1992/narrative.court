@@ -76,6 +76,9 @@ pricing:                               # illustrative USD; edit to match your pr
     deepseek-v4-pro: { input_per_mtok: 0.5, output_per_mtok: 1.5 }
     gemini-3.1-pro: { input_per_mtok: 2.5, output_per_mtok: 10.0 }
 
+verdict:                                # H4: honesty-judge talking points for the host
+  llm_judge: false                      # false -> deterministic flag-based score; true (live) -> LLM judge
+
 # ---------- Model roster (15) ----------
 # api_format: openai | anthropic | google | yandex | gigachat | falcon | hyperclova
 # base_url: null => provider default for that SDK

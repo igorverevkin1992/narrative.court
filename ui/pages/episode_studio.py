@@ -41,6 +41,7 @@ from modules.episodes.manager import (
     step_script,
     step_smoke_test,
     step_tts,
+    step_verdict,
     sync_quickfire_selection,
     tts_checkpoint_summary,
 )
@@ -324,12 +325,29 @@ def render(state: AppState) -> None:
                      f"квикфайр: {qf}. «Продолжить» догенерирует только недостающее.")\
                 .classes("text-sm text-amber-700")
 
+    @ui.refreshable
+    def verdict_panel() -> None:
+        """H4: honesty-judge talking points for the on-camera host."""
+        e = ep()
+        v = (e.verdict if e else None) or {}
+        if not v:
+            ui.label("Вердикт ещё не посчитан (по умолчанию считается при сборке сценария).")\
+                .classes("text-grey text-sm")
+            return
+        ui.label(f"⚖ {v.get('summary', '')}").classes("text-sm font-bold")
+        for side, ru in (("prosecution", "Обвинение"), ("defense", "Защита")):
+            sv = v.get(side) or {}
+            ui.label(f"{ru}: {sv.get('score', '?')}/10 — {sv.get('rationale', '')}")\
+                .classes("text-sm")
+        ui.label(f"method: {v.get('method', '?')}").classes("text-xs text-grey")
+
     def _refresh_all():
         review_panel.refresh()
         objection_panel.refresh()
         quickfire_panel.refresh()
         metadata_panel.refresh()
         gen_status_panel.refresh()
+        verdict_panel.refresh()
 
     # --------------------------------------------------------------- stepper
     with ui.stepper().props("vertical flat").classes("w-full q-mt-md") as stepper:
@@ -516,6 +534,22 @@ def render(state: AppState) -> None:
         with ui.step("5. Ревью контента"):
             ui.label("REFUSED/SUPPRESSED — красный, EVASIVE/WEAK — жёлтый.").classes("text-xs text-grey")
             review_panel()
+
+            ui.separator()
+            ui.label("Вердикт судьи (честность аргументации) — реплики для ведущего:")\
+                .classes("text-sm font-bold q-mt-sm")
+
+            async def _run_verdict():
+                e = ep()
+                if e is None:
+                    return
+                await run.io_bound(step_verdict, e, cfg, offline=offline.value)  # H4
+                autosave()
+                verdict_panel.refresh()
+                ui.notify("Вердикт посчитан", type="positive")
+            ui.button("⚖ Посчитать вердикт", on_click=_run_verdict).props("flat color=primary")
+            verdict_panel()
+
             with ui.stepper_navigation():
                 ui.button("Назад", on_click=stepper.previous).props("flat")
                 ui.button("Далее", on_click=stepper.next).props("color=primary")
@@ -681,6 +715,9 @@ def render(state: AppState) -> None:
                     ui.label(f"EDL (fallback): {exp['edl']}").classes("text-xs")
                     ui.label(f"Маркеры: {exp['markers_md']}").classes("text-xs")
                     ui.label(f"Сценарий: {scr['script']}").classes("text-xs")
+                    if scr.get("srt"):
+                        ui.label(f"Субтитры: {scr['srt']} · {scr['vtt']} "
+                                 f"({scr.get('cues', 0)} реплик)").classes("text-xs")  # H3
                     if exp.get("otio"):
                         ui.label(f"OTIO (native DaVinci): {exp['otio']}").classes("text-xs")  # I8
                     ui.link("Открыть Script Viewer →", "/script")

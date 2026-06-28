@@ -70,7 +70,32 @@ def build_script_md(episode: Episode) -> str:
             lines.append(f"- Prosecution: {ex.prosecution_answer}")
             lines.append(f"- Defense: {ex.defense_answer}")
             lines.append("")
+
+    v = episode.verdict
+    if v:
+        lines.append(f"## Honesty verdict ({v.get('method', 'flag_based')})")
+        lines.append(v.get("summary", ""))
+        for side in ("prosecution", "defense"):
+            sv = v.get(side) or {}
+            lines.append(f"- **{side.capitalize()} {sv.get('score', '?')}/10:** "
+                         f"{sv.get('rationale', '')}")
+        lines.append("")
     return "\n".join(lines) + "\n"
+
+
+def build_host_cues(episode: Episode) -> str:
+    """Host (on-camera) cues. Block 8 carries the real honesty-verdict talking
+    points when a verdict has been computed (H4), else generic guidance."""
+    base = HOST_CUES_TEMPLATE.replace("{slug}", episode.slug).replace("{thesis}", episode.thesis)
+    v = episode.verdict
+    if not v:
+        return base
+    notes = ["", "### Verdict talking points (honesty-judge)", v.get("summary", "")]
+    for side in ("prosecution", "defense"):
+        sv = v.get(side) or {}
+        notes.append(f"- {side.capitalize()} — {sv.get('score', '?')}/10: {sv.get('rationale', '')}")
+    notes.append("- Read these as honesty ratings of argumentation; do NOT declare a truth winner.")
+    return base + "\n".join(notes) + "\n"
 
 
 def write_script(episode: Episode, script_dir: str | Path) -> dict:
@@ -83,10 +108,7 @@ def write_script(episode: Episode, script_dir: str | Path) -> dict:
     flags_path = out / "behaviour_flags.json"
 
     script_path.write_text(build_script_md(episode), encoding="utf-8")
-    cues_path.write_text(
-        HOST_CUES_TEMPLATE.replace("{slug}", episode.slug).replace("{thesis}", episode.thesis),
-        encoding="utf-8",
-    )
+    cues_path.write_text(build_host_cues(episode), encoding="utf-8")
 
     all_flags = list(episode.behaviour_flags)
     for replicas in episode.rounds.values():

@@ -195,6 +195,7 @@ class Episode(BaseModel):
     tts_files: list[str] = Field(default_factory=list)
     timeline_data: TimelineData | None = None
     leaderboard_result: dict | None = None
+    verdict: dict | None = None          # H4: honesty-judge talking points for the host
     youtube_metadata: dict = Field(default_factory=dict)
 
     @field_validator("slug")

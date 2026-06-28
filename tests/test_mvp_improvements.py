@@ -19,14 +19,19 @@ from modules.episodes.manager import (
     load_episode,
     n_clips,
     save_episode,
+    step_export,
     step_generate,
+    step_script,
     step_tts,
 )
 from modules.generator.episode_generator import EpisodeGenerator
 from modules.llm.orchestrator import Orchestrator
+from modules.metadata.generator import CHAPTERS, build_chapters
 from modules.preview import build_preview
-from modules.schemas import Episode
+from modules.schemas import BehaviourFlag, Episode, Replica, Side
+from modules.subtitles import build_cues, build_subtitles
 from modules.timeline.timecode_calculator import _ordered_round_ids, audio_duration_sec
+from modules.verdict import build_verdict
 
 
 def _cfg(tmp_path):
@@ -164,3 +169,105 @@ def test_g2_within_budget_cap_logic(tmp_path):
     config._data["pricing"]["max_episode_usd"] = est / 2.0  # cap below estimate
     ok3, est3, _ = within_budget(ep, config)
     assert not ok3 and est3 == est
+
+
+# --- H2: real YouTube chapters from the timeline ---------------------------
+def _sec(ts: str) -> int:
+    parts = [int(x) for x in ts.split(":")]
+    parts = [0] * (3 - len(parts)) + parts
+    return parts[0] * 3600 + parts[1] * 60 + parts[2]
+
+
+async def test_h2_chapters_from_timeline(tmp_path):
+    config = _cfg(tmp_path)
+    ep = _ep("ep_h2")
+    await step_generate(ep, config, offline=True)
+    step_tts(ep, config, offline=True)
+    step_export(ep, config)               # populates episode.timeline_data
+
+    ch = build_chapters(ep)
+    assert ch[0][0] == "0:00"             # YouTube requires the first chapter at 0:00
+    assert len(ch) >= 3
+    labels = [c[1] for c in ch]
+    assert any("Round 1" in lbl for lbl in labels) and any("Round 4" in lbl for lbl in labels)
+    secs = [_sec(c[0]) for c in ch]
+    assert secs == sorted(secs) and len(set(secs)) == len(secs)   # strictly increasing
+    assert ch != CHAPTERS                 # not the hardcoded fiction
+
+
+def test_h2_chapters_fallback_without_timeline(tmp_path):
+    ep = _ep("ep_h2b")                    # no timeline built yet
+    assert build_chapters(ep) == CHAPTERS
+
+
+# --- H3: SRT/VTT subtitles -------------------------------------------------
+async def test_h3_subtitles_srt_vtt(tmp_path):
+    import re
+
+    config = _cfg(tmp_path)
+    ep = _ep("ep_h3sub")
+    await step_generate(ep, config, offline=True)
+    step_tts(ep, config, offline=True)
+    step_export(ep, config)
+
+    res = build_subtitles(ep, config)
+    assert Path(res["srt"]).exists() and Path(res["vtt"]).exists() and res["cues"] > 0
+
+    srt = Path(res["srt"]).read_text(encoding="utf-8")
+    assert re.search(r"\d{2}:\d{2}:\d{2},\d{3} --> \d{2}:\d{2}:\d{2},\d{3}", srt)
+    vtt = Path(res["vtt"]).read_text(encoding="utf-8")
+    assert vtt.startswith("WEBVTT")
+    assert re.search(r"\d{2}:\d{2}:\d{2}\.\d{3} --> \d{2}:\d{2}:\d{2}\.\d{3}", vtt)
+
+    cues = build_cues(ep)
+    assert cues[0][0] < 0.001                       # first cue starts at the episode head
+    assert [c[0] for c in cues] == sorted(c[0] for c in cues)   # monotonic
+
+
+def test_h3_subtitles_requires_timeline(tmp_path):
+    ep = _ep("ep_h3b")
+    with pytest.raises(ValueError, match="timeline"):
+        build_cues(ep)
+
+
+# --- H4: honesty verdict ---------------------------------------------------
+async def test_h4_verdict_offline_canon(tmp_path):
+    config = _cfg(tmp_path)
+    ep = _ep("ep_h4")
+    await step_generate(ep, config, offline=True)
+
+    v = build_verdict(ep, config, offline=True)
+    assert v["method"] == "flag_based"
+    for side in ("prosecution", "defense"):
+        assert 0 <= v[side]["score"] <= 10 and v[side]["rationale"]
+    assert "Honesty verdict" in v["summary"]
+
+
+def test_h4_score_penalizes_flags(tmp_path):
+    config = _cfg(tmp_path)
+    ep = _ep("ep_h4c")
+    clean = Replica(round_id="r1_prosecution", side=Side.PROSECUTION,
+                    model_id="gpt-5.5", text="x" * 100, used_text="x" * 100)
+    flagged = Replica(round_id="r1_defense", side=Side.DEFENSE, model_id="deepseek-v4-pro",
+                      text="y" * 100, used_text="y" * 100,
+                      flags=[BehaviourFlag(flag_type="REFUSED", confidence=1.0, evidence="e",
+                                           rule_triggered="t", model_id="deepseek-v4-pro",
+                                           round_id="r1_defense")])
+    ep.rounds = {"r1_prosecution": [clean], "r1_defense": [flagged]}
+    v = build_verdict(ep, config, offline=True)
+    assert v["prosecution"]["score"] > v["defense"]["score"]
+
+
+async def test_h4_verdict_in_script_and_host_cues(tmp_path):
+    config = _cfg(tmp_path)
+    ep = _ep("ep_h4d")
+    await step_generate(ep, config, offline=True)
+    step_tts(ep, config, offline=True)
+    step_export(ep, config)
+    res = step_script(ep, config)
+
+    assert ep.verdict is not None                    # auto-computed fallback in step_script
+    cues = Path(res["host_cues"]).read_text(encoding="utf-8")
+    assert "Verdict talking points" in cues
+    script = Path(res["script"]).read_text(encoding="utf-8")
+    assert "Honesty verdict" in script
